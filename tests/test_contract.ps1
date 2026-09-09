@@ -21,13 +21,18 @@ $requiredMainPatterns = @(
     '#define MOTOR_TEST_PULSES\s+160U',
     '#define TEST_MOTOR_ID\s+5U',
     '#define CAN_CHECK_TIMEOUT_MS\s+300U',
+    '#define SERVO_MIN_PULSE_US\s+500U',
+    '#define SERVO_PULSE_RANGE_US\s+2000U',
+    '#define SERVO_PERIOD_US\s+20000U',
+    '#define SERVO_SPEED_DPS\s+30U',
     'RCC_APB1PeriphClockCmd\(RCC_APB1Periph_UART5, ENABLE\)',
     'GPIO_PinAFConfig\(GPIOC, GPIO_PinSource12, GPIO_AF_UART5\)',
     'GPIO_PinAFConfig\(GPIOD, GPIO_PinSource2, GPIO_AF_UART5\)',
     'void UART5_IRQHandler\(void\)',
+    'void TIM2_IRQHandler\(void\)',
     "received == '!'",
     'else if \(!emergencyStop &&',
-    'if \(emergencyStop\)\s*\{\s*stopAllMotors\(\);\s*__disable_irq\(\);\s*emergencyStop = 0U;',
+    'if \(emergencyStop\)\s*\{\s*stopServoMotion\(\);\s*stopAllMotors\(\);\s*__disable_irq\(\);\s*emergencyStop = 0U;',
     'static void setAllMotorsEnabled\(bool enabled\)',
     'Emm_V5_En_Control\(id, enabled, false\)',
     '(?s)strcmp\(command, "enable"\) == 0.*?if \(!armed\).*?armed = 0U;.*?setAllMotorsEnabled\(true\)',
@@ -47,6 +52,14 @@ $requiredMainPatterns = @(
     'TX queued: motor 5 direction ',
     'for \(id = MOTOR_MIN_ID; id <= TEST_MOTOR_ID; \+\+id\)',
     'Emm_V5_Synchronous_motion\(0x00\)',
+    '(?s)static CommandResult parseServoCommand\(const char \*line,.*?channel < 2U \|\| channel > 4U.*?channel < 4U && angle > 270U.*?channel == 4U && angle > 360U',
+    '(?s)strncmp\(command, "servo ", 6U\) == 0.*?processServoCommand\(command\)',
+    '(?s)static void stopServoMotion\(void\).*?targetAngleMdeg\[index\] = currentAngleMdeg\[index\]',
+    '(?s)if \(emergencyStop\).*?stopServoMotion\(\);.*?stopAllMotors\(\)',
+    '(?s)strcmp\(command, "stop"\) == 0.*?stopServoMotion\(\);.*?stopAllMotors\(\)',
+    'RCC_APB1PeriphClockCmd\(RCC_APB1Periph_TIM2, ENABLE\)',
+    'GPIO_PinAFConfig\(GPIOA, pinSource, GPIO_AF_TIM2\)',
+    'TIM_ITConfig\(TIM2, TIM_IT_Update, ENABLE\)',
     '\{1U, 1U, 0U, 0U, 1U\}',
     '\{0U, 0U, 1U, 1U, 0U\}',
     '\{1U, 1U, 1U, 0U, 0U\}',
@@ -78,6 +91,9 @@ if ($project -notmatch '<Device>STM32F407ZG</Device>') {
 }
 if ($project -match 'STM32F103') {
     throw 'Keil project contains an STM32F103 target setting.'
+}
+if ($project -notmatch 'stm32f4xx_tim\.c') {
+    throw 'Keil project does not include the TIM driver required by servo PWM.'
 }
 
 [xml]$projectXml = $project
