@@ -20,6 +20,7 @@ $requiredMainPatterns = @(
     '#define MOTOR_TEST_ACCEL\s+50U',
     '#define MOTOR_TEST_PULSES\s+160U',
     '#define TEST_MOTOR_ID\s+5U',
+    '#define CAN_CHECK_TIMEOUT_MS\s+300U',
     'RCC_APB1PeriphClockCmd\(RCC_APB1Periph_UART5, ENABLE\)',
     'GPIO_PinAFConfig\(GPIOC, GPIO_PinSource12, GPIO_AF_UART5\)',
     'GPIO_PinAFConfig\(GPIOD, GPIO_PinSource2, GPIO_AF_UART5\)',
@@ -36,6 +37,14 @@ $requiredMainPatterns = @(
     '(?s)strcmp\(command, "motor5 1"\) == 0.*?startMotor5Jog\(1U\)',
     '(?s)static void startMotor5Jog\(uint8_t direction\).*?if \(!armed\).*?Emm_V5_Pos_Control\(TEST_MOTOR_ID, direction,.*?false, false\)',
     '(?s)strcmp\(command, "disable5"\) == 0.*?Emm_V5_Stop_Now\(TEST_MOTOR_ID, false\).*?Emm_V5_En_Control\(TEST_MOTOR_ID, false, false\).*?armed = 0U;',
+    '(?s)strcmp\(command, "cancheck5"\) == 0.*?checkMotor5Can\(\)',
+    '(?s)static void checkMotor5Can\(void\).*?can\.rxFrameFlag = false;.*?Emm_V5_Read_Sys_Params\(TEST_MOTOR_ID, S_FLAG\).*?CAN_CHECK_TIMEOUT_MS',
+    'CAN RX motor 5:',
+    'ERR: motor 5 no CAN reply; ESR=',
+    'CAN1->ESR',
+    'CAN1->TSR',
+    'TX queued: chassis ',
+    'TX queued: motor 5 direction ',
     'for \(id = MOTOR_MIN_ID; id <= TEST_MOTOR_ID; \+\+id\)',
     'Emm_V5_Synchronous_motion\(0x00\)',
     '\{1U, 1U, 0U, 0U, 1U\}',
@@ -53,7 +62,9 @@ foreach ($pattern in $requiredMainPatterns) {
 $forbiddenMainPatterns = @(
     'USART1',
     'GPIO_Pin_9',
-    'GPIO_Pin_10'
+    'GPIO_Pin_10',
+    'OK: chassis ',
+    'OK: motor 5 direction '
 )
 
 foreach ($pattern in $forbiddenMainPatterns) {

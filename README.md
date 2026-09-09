@@ -33,6 +33,7 @@ enable5   使能 5 号诊断电机，必须先 arm
 motor5 0  5 号电机按方向 0 点动，必须先 arm
 motor5 1  5 号电机按方向 1 点动，必须先 arm
 disable5  停止并失能 5 号电机，无需 arm
+cancheck5 查询 5 号电机 CAN 状态并打印原始回包，无需 arm
 W / w     前进点动
 S / s     后退点动
 A / a     左移点动
@@ -67,6 +68,14 @@ disable5
 ```
 
 5 号电机使用同样的速度、加速度和脉冲数，但采用参考工程中单电机位置控制的立即启动方式，不发送同步启动帧。`X`、`stop` 和 `!` 均会停止 1～5 号电机。
+
+若电机不转，先发送：
+
+```text
+cancheck5
+```
+
+收到 5 号驱动器回包时，串口输出 `CAN RX motor 5` 以及扩展帧 ID、DLC 和原始数据；300 ms 内没有回包时，输出 `ERR: motor 5 no CAN reply` 以及 STM32 CAN 的 `ESR/TSR` 寄存器值。`TX queued` 只表示固件已把运动命令交给 CAN 外设，不表示驱动器已经执行。
 
 ## 方向映射
 

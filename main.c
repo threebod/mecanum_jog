@@ -14,6 +14,7 @@
 #define MOTOR_TEST_SPEED   30U
 #define MOTOR_TEST_ACCEL   50U
 #define MOTOR_TEST_PULSES  160U
+#define CAN_CHECK_TIMEOUT_MS  300U
 
 typedef enum {
     DIRECTION_FORWARD = 0,
@@ -49,6 +50,28 @@ static void serialSendString(const char *text)
         serialSendChar(*text++);
     }
     while (USART_GetFlagStatus(UART5, USART_FLAG_TC) == RESET) {
+    }
+}
+
+static void serialSendHex4(uint8_t value)
+{
+    static const char digits[] = "0123456789ABCDEF";
+
+    serialSendChar(digits[value & 0x0FU]);
+}
+
+static void serialSendHex8(uint8_t value)
+{
+    serialSendHex4(value >> 4);
+    serialSendHex4(value);
+}
+
+static void serialSendHex32(uint32_t value)
+{
+    int8_t shift;
+
+    for (shift = 28; shift >= 0; shift -= 4) {
+        serialSendHex4((uint8_t)(value >> shift));
     }
 }
 
@@ -124,6 +147,7 @@ static void printHelp(void)
     serialSendString("  motor5 0  jog motor 5 in direction 0 (armed)\r\n");
     serialSendString("  motor5 1  jog motor 5 in direction 1 (armed)\r\n");
     serialSendString("  disable5  stop and disable motor 5\r\n");
+    serialSendString("  cancheck5 query motor 5 CAN status\r\n");
     serialSendString("  W/S/A/D   forward/back/left/right\r\n");
     serialSendString("  X, stop   stop motors and disarm\r\n");
     serialSendString("  !         emergency stop (no Enter needed)\r\n");
@@ -159,7 +183,7 @@ static void startJog(MecanumDirection direction, const char *name)
         return;
     }
     Emm_V5_Synchronous_motion(0x00);
-    serialSendString("OK: chassis ");
+    serialSendString("TX queued: chassis ");
     serialSendString(name);
     serialSendString(", auto-disarmed\r\n");
 }
@@ -175,9 +199,68 @@ static void startMotor5Jog(uint8_t direction)
     Emm_V5_Pos_Control(TEST_MOTOR_ID, direction,
                        MOTOR_TEST_SPEED, MOTOR_TEST_ACCEL,
                        MOTOR_TEST_PULSES, false, false);
-    serialSendString("OK: motor 5 direction ");
+    serialSendString("TX queued: motor 5 direction ");
     serialSendString(direction == 0U ? "0" : "1");
     serialSendString(", auto-disarmed\r\n");
+}
+
+static void checkMotor5Can(void)
+{
+    uint32_t elapsed;
+    uint32_t extId = 0U;
+    uint8_t dlc = 0U;
+    uint8_t data[8] = {0U};
+    uint8_t i;
+    uint8_t received = 0U;
+
+    __disable_irq();
+    can.rxFrameFlag = false;
+    __enable_irq();
+    Emm_V5_Read_Sys_Params(TEST_MOTOR_ID, S_FLAG);
+
+    for (elapsed = 0U; elapsed < CAN_CHECK_TIMEOUT_MS; ++elapsed) {
+        if (emergencyStop) {
+            return;
+        }
+        if (can.rxFrameFlag) {
+            __disable_irq();
+            extId = can.CAN_RxMsg.ExtId;
+            dlc = can.CAN_RxMsg.DLC;
+            if (dlc > 8U) {
+                dlc = 8U;
+            }
+            for (i = 0U; i < dlc; ++i) {
+                data[i] = can.CAN_RxMsg.Data[i];
+            }
+            can.rxFrameFlag = false;
+            __enable_irq();
+
+            if (((extId >> 8) & 0xFFU) == TEST_MOTOR_ID) {
+                received = 1U;
+                break;
+            }
+        }
+        delay_ms(1U);
+    }
+
+    if (received) {
+        serialSendString("CAN RX motor 5: ExtId=0x");
+        serialSendHex32(extId);
+        serialSendString(" DLC=0x");
+        serialSendHex8(dlc);
+        serialSendString(" DATA=");
+        for (i = 0U; i < dlc; ++i) {
+            serialSendHex8(data[i]);
+            serialSendChar(' ');
+        }
+        serialSendString("\r\n");
+    } else {
+        serialSendString("ERR: motor 5 no CAN reply; ESR=0x");
+        serialSendHex32(CAN1->ESR);
+        serialSendString(" TSR=0x");
+        serialSendHex32(CAN1->TSR);
+        serialSendString("\r\n");
+    }
 }
 
 static void processCommand(const char *command)
@@ -215,6 +298,8 @@ static void processCommand(const char *command)
         Emm_V5_En_Control(TEST_MOTOR_ID, false, false);
         armed = 0U;
         serialSendString("OK: motor 5 stopped, disabled and disarmed\r\n");
+    } else if (strcmp(command, "cancheck5") == 0) {
+        checkMotor5Can();
     } else if (strcmp(command, "W") == 0 || strcmp(command, "w") == 0) {
         startJog(DIRECTION_FORWARD, "forward");
     } else if (strcmp(command, "S") == 0 || strcmp(command, "s") == 0) {
