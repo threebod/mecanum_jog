@@ -1,0 +1,11 @@
+# Keil build outputs
+Objects/
+Listings/
+build.log
+
+# Keil machine-specific files
+DebugConfig/
+RTE/
+*.uvoptx
+*.uvguix.*
+*.bak
