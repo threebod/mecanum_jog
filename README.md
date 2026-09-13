@@ -1,5 +1,7 @@
 # 麦克纳姆轮串口点动测试例程
 
+已增加同步距离测试、IMU 航向保持、单轮验向和四轮 CAN 查询。完整新增命令、接线及落地测试步骤见 [STRAIGHT_TEST.md](STRAIGHT_TEST.md)。原有命令保留；新版本运动期间会拒绝叠加运动命令，等待测试窗口结束或先停车。
+
 本例程用于架空状态下检查 1～4 号麦轮电机的编号、方向和四轮联动。工程复用 `yyb_stm32` 的 STM32F407ZG 标准外设库、CAN 和 Emm_V5 驱动，不会修改参考工程。
 
 ## 硬件与通信
@@ -116,7 +118,7 @@ cancheck5
 在工作区根目录运行：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File test\mecanum_jog\tests\test_contract.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File mecanum_jog-main\mecanum_jog-main\tests\test_contract.ps1
 ```
 
 该检查验证工程目标、共享源码路径、串口参数和方向表；它不能替代 Keil 编译或实机测试。
