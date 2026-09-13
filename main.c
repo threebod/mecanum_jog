@@ -88,6 +88,12 @@ static uint8_t routeAuto, routeRotating, routeOnlyTurn, routeTurnInBand;
 static int8_t routeHeading, routeNextHeading;
 static float routeBaseYaw;
 static uint32_t routeTurnStart, routeTurnStable;
+static float routeDriveRpm, routeTurnRpm, routeCorrection;
+static int16_t routeSent[4];
+static uint8_t routeSentValid;
+static uint8_t straightLateral;
+static float straightSpeedState, straightTurnState;
+static void sendRouteSpeeds(int16_t forward, int16_t right, int16_t turn);
 
 static void serialSendChar(char value)
 {
@@ -191,6 +197,9 @@ static void stopAllMotors(void)
     routeActive = 0U;
     routeWaiting = 0U;
     routeRotating = routeOnlyTurn = routeTurnInBand = 0U;
+    routeDriveRpm = routeTurnRpm = routeCorrection = 0.0f;
+    routeSentValid = 0U;
+    straightSpeedState = straightTurnState = 0.0f;
     routeForward = routeRight = 0;
     for (id = MOTOR_MIN_ID; id <= TEST_MOTOR_ID; ++id) {
         Emm_V5_Stop_Now(id, false);
@@ -228,7 +237,7 @@ static void printHelp(void)
     serialSendString("  help      show this help\r\n");
     serialSendString("  line W 100 30   synced forward 100mm at 30rpm (arm)\r\n");
     serialSendString("  straight W 2000 30  IMU heading hold, 2000ms (arm)\r\n");
-    serialSendString("  line/straight direction: W or S; max 500mm/5000ms, 10..60rpm\r\n");
+    serialSendString("  line: W/S; straight: W/S/A/D; max 500mm/5000ms, 10..60rpm\r\n");
     serialSendString("  wheel 1 0      single wheel 1..4, raw dir 0/1 (arm)\r\n");
     serialSendString("  invert 1 1     reverse wheel 1..4 mapping, 0/1\r\n");
     serialSendString("  trim 1 1000    wheel scale 900..1100, RAM only\r\n");
@@ -613,24 +622,10 @@ static void imuInit(uint32_t baud)
     USART_ITConfig(USART2, USART_IT_RXNE, ENABLE);
 }
 
-static void sendStraightSpeeds(int16_t forward, int16_t turn)
-{
-    uint8_t id, direction;
-    int16_t speed;
-    for (id = 1U; id <= 4U; ++id) {
-        if (motionInterrupted()) return;
-        speed = wheelSpeed(id, forward, turn, motorTrim[id]);
-        direction = motorDirections[DIRECTION_FORWARD][id] ^ motorInvert[id];
-        if (speed < 0) { speed = -speed; direction ^= 1U; }
-        Emm_V5_Vel_Control(id, direction, (uint16_t)speed, 0U, true);
-    }
-    if (!motionInterrupted()) Emm_V5_Synchronous_motion(0x00);
-}
-
 static void serviceMotion(void)
 {
-    uint32_t elapsed, age;
-    float yaw, error;
+    uint32_t elapsed, age, dt, edge;
+    float yaw, error, t;
     int16_t correction;
     uint16_t speed;
     if (!motionMode || emergencyStop) return;
@@ -641,22 +636,29 @@ static void serviceMotion(void)
         return;
     }
     if (motionMode != 2U || clockMs - lastControl < 20U) return;
+    dt = clockMs - lastControl;
     lastControl = clockMs;
     __disable_irq();
     yaw = imuYaw;
     age = clockMs - imuStamp;
     __enable_irq();
     error = headingError(targetYaw, yaw);
-    if (!imuValid || age > 250U || error > 20.0f || error < -20.0f) {
+    if (!imuValid || age > 250U || dt > 150U || error > 20.0f || error < -20.0f) {
         stopAllMotors();
         serialSendString("ERR: IMU stale or yaw deviation >20deg; stopped\r\n");
         return;
     }
-    speed = rampSpeed(elapsed, motionDuration, straightRpm);
-    correction = headingCorrection(error, yawSign);
-    /* Ramp the yaw component as well; never spin in place at the endpoints. */
-    correction = (int16_t)(correction * (int16_t)speed / straightRpm);
-    sendStraightSpeeds((int16_t)(straightDirection * speed), correction);
+    edge = elapsed < motionDuration - elapsed ? elapsed : motionDuration - elapsed;
+    t = edge < 800U ? edge / 800.0f : 1.0f;
+    straightSpeedState = routeSlew(straightSpeedState,
+        straightRpm * t * t * (3.0f - 2.0f * t), ROUTE_ACCEL_RPM_S, dt);
+    speed = (uint16_t)routeRound(straightSpeedState);
+    correction = routeAbs(error) < 0.6f ? 0 : headingCorrection(error, yawSign);
+    straightTurnState = routeSlew(straightTurnState,
+        (float)correction * speed / straightRpm, 30.0f, dt);
+    correction = routeRound(straightTurnState);
+    sendRouteSpeeds(straightLateral ? 0 : (int16_t)(straightDirection * speed),
+        straightLateral ? (int16_t)(straightDirection * speed) : 0, correction);
 }
 
 static uint8_t parsePair(const char *cursor, uint16_t *a, uint16_t *b)
@@ -672,11 +674,11 @@ static void startLine(const char *cursor, uint8_t heading)
     uint8_t id, direction;
     char way = *cursor++;
     uint32_t pulses;
-    if ((way != 'W' && way != 'S') || *cursor != ' ' ||
+    if ((way != 'W' && way != 'S' && (!heading || (way != 'A' && way != 'D'))) || *cursor != ' ' ||
         !parsePair(cursor, &amount, &rpm) || rpm < 10U || rpm > 60U ||
         (heading && (amount < 1000U || amount > 5000U)) ||
         (!heading && (amount < 20U || amount > 500U))) {
-        serialSendString("ERR: line W|S 20..500 10..60; straight W|S 1000..5000 10..60\r\n");
+        serialSendString("ERR: line W|S 20..500 10..60; straight W|S|A|D 1000..5000 10..60\r\n");
         return;
     }
     if (!armed) { serialSendString("ERR: send 'arm' first\r\n"); return; }
@@ -688,7 +690,10 @@ static void startLine(const char *cursor, uint8_t heading)
     if (heading) {
         targetYaw = imuYaw; /* Hold the current heading; no sensor zero command. */
         straightRpm = rpm;
-        straightDirection = way == 'W' ? 1 : -1;
+        straightDirection = (way == 'W' || way == 'D') ? 1 : -1;
+        straightLateral = (uint8_t)(way == 'A' || way == 'D');
+        straightSpeedState = straightTurnState = 0.0f;
+        routeSentValid = 0U;
         motionDuration = amount;
         motionStart = clockMs;
         lastControl = clockMs - 20U;
@@ -858,15 +863,27 @@ static void printRouteStatus(void)
 static void sendRouteSpeeds(int16_t forward, int16_t right, int16_t turn)
 {
     uint8_t id, direction;
-    int16_t speed;
+    uint8_t changed = (uint8_t)!routeSentValid;
+    int16_t speed, speeds[4];
+    for (id = 1U; id <= 4U; ++id) {
+        speeds[id - 1U] = routeWheel(id, forward, right, turn, motorTrim[id]);
+        if (speeds[id - 1U] != routeSent[id - 1U]) changed = 1U;
+    }
+    /* A velocity command persists in the drive. Re-send the synchronized batch
+     * only when a wheel target changes, not every iteration at constant speed. */
+    if (!changed) return;
     for (id = 1U; id <= 4U; ++id) {
         if (motionInterrupted()) return;
-        speed = routeWheel(id, forward, right, turn, motorTrim[id]);
+        speed = speeds[id - 1U];
         direction = motorDirections[0][id] ^ motorInvert[id];
         if (speed < 0) { speed = -speed; direction ^= 1U; }
         Emm_V5_Vel_Control(id, direction, (uint16_t)speed, 0U, true);
     }
     if (!motionInterrupted()) Emm_V5_Synchronous_motion(0x00);
+    if (!motionInterrupted()) {
+        for (id = 0U; id < 4U; ++id) routeSent[id] = speeds[id];
+        routeSentValid = 1U;
+    }
 }
 
 static void serviceRoute(void)
@@ -896,20 +913,22 @@ static void serviceRoute(void)
         if (now - routeTurnStart > 18000U) {
             stopAllMotors(); serialSendString("ERR TURN: timeout; aborted\r\n"); return;
         }
-        if (routeAbs(error) <= 2.0f) {
-            sendRouteSpeeds(0, 0, 0);
-            if (!routeTurnInBand) { routeTurnStable = now; routeTurnInBand = 1U; }
+        /* Separate enter/exit thresholds prevent stop/start chatter at 2deg. */
+        if (!routeTurnInBand && routeAbs(error) <= 2.0f) routeTurnInBand = 1U;
+        if (routeTurnInBand && routeAbs(error) > 3.5f) routeTurnInBand = 0U;
+        routeTurnRpm = routeSlew(routeTurnRpm,
+            routeTurnInBand ? 0.0f : (float)routeTurnSpeed(error, yawSign), ROUTE_TURN_ACCEL, dt);
+        sendRouteSpeeds(0, 0, routeRound(routeTurnRpm));
+        if (routeTurnInBand && routeRound(routeTurnRpm) == 0) {
+            if (routeTurnInBand == 1U) { routeTurnStable = now; routeTurnInBand = 2U; }
             if (now - routeTurnStable >= 200U) {
                 routeRotating = routeTurnInBand = 0U;
                 routeHeading = routeNextHeading;
                 routeLegStart = now;
                 if (routeOnlyTurn) {
-                    stopAllMotors(); serialSendString("TURN DONE within 2deg\r\n");
+                    stopAllMotors(); serialSendString("TURN DONE (2deg entry / 3.5deg hysteresis)\r\n");
                 }
             }
-        } else {
-            routeTurnInBand = 0U;
-            sendRouteSpeeds(0, 0, routeTurnSpeed(error, yawSign));
         }
         return;
     }
@@ -919,10 +938,18 @@ static void serviceRoute(void)
     if (!routeAuto && now - routeSettle < 300U) return;
     p = routePoint(routeIndex, routeStartZone);
     dx = p.x - routeX; dy = p.y - routeY;
+    /* At the endpoint don't reverse just because one sampled step crossed it. */
+    if ((routeRight > 0 && dx < 0) || (routeRight < 0 && dx > 0)) {
+        routeX = p.x; dx = 0;
+    }
+    if ((routeForward > 0 && dy < 0) || (routeForward < 0 && dy > 0)) {
+        routeY = p.y; dy = 0;
+    }
     if (routeAbs(dx) <= 1.5f && routeAbs(dy) <= 1.5f) {
         sendRouteSpeeds(0, 0, 0);
         if (motionInterrupted()) return;
         routeForward = routeRight = 0;
+        routeDriveRpm = routeTurnRpm = routeCorrection = 0.0f;
         routeX = p.x; routeY = p.y; /* snap NOMINAL coordinates only */
         if (p.heading != 4 && p.heading != routeHeading) {
             routeNextHeading = p.heading;
@@ -951,10 +978,14 @@ static void serviceRoute(void)
     lateral = routeAbs(dx) > 1.5f;
     remaining = lateral ? routeAbs(dx) : routeAbs(dy);
     speed = routeSpeed(remaining, now - routeLegStart);
+    routeDriveRpm = routeSlew(routeDriveRpm, speed, ROUTE_ACCEL_RPM_S, dt);
+    speed = routeRound(routeDriveRpm);
     routeRight = lateral ? (dx > 0 ? speed : -speed) : 0;
     routeForward = lateral ? 0 : (dy > 0 ? speed : -speed);
-    turn = headingCorrection(error, yawSign);
-    turn = (int16_t)(turn * speed / ROUTE_RPM);
+    turn = routeAbs(error) < 0.6f ? 0 : headingCorrection(error, yawSign);
+    routeCorrection = routeSlew(routeCorrection,
+        (float)turn * speed / ROUTE_RPM, 30.0f, dt);
+    turn = routeRound(routeCorrection);
     routeBody(routeForward, routeRight, routeHeading, &bodyForward, &bodyRight);
     sendRouteSpeeds(bodyForward, bodyRight, turn);
 }
@@ -980,6 +1011,8 @@ static uint8_t processRouteCommand(const char *command)
         setAllMotorsEnabled(true);
         if (motionInterrupted()) { stopAllMotors(); return 1U; }
         routeForward = routeRight = 0;
+        routeDriveRpm = routeTurnRpm = routeCorrection = 0.0f;
+        routeSentValid = 0U;
         routeTick = routeTurnStart = routeLegStart = clockMs;
         routeWaiting = routeTurnInBand = 0U;
         routeOnlyTurn = routeRotating = routeActive = 1U;
@@ -1010,6 +1043,8 @@ static uint8_t processRouteCommand(const char *command)
     autoRun = (uint8_t)(strncmp(command, "route auto ", 11U) == 0);
     start = (uint8_t)(command[strlen(command) - 1U] - '0');
     routeAuto = autoRun; routeHeading = routeNextHeading = 0;
+    routeDriveRpm = routeTurnRpm = routeCorrection = 0.0f;
+    routeSentValid = 0U;
     routeRotating = routeOnlyTurn = routeTurnInBand = 0U;
     routeStartZone = start; routeStep = step; routeIndex = 0U;
     routeX = 2250.0f; routeY = start == 1U ? 2250.0f : 150.0f;
