@@ -2,7 +2,7 @@
 Build target 'MecanumJog'
 Note: source file '.\jog_can.c' - object file renamed from '.\Objects\can.o' to '.\Objects\can.o'.compiling main.c...
 linking...
-Program Size: Code=24652 RO-data=824 RW-data=148 ZI-data=1740  
+Program Size: Code=26192 RO-data=956 RW-data=168 ZI-data=1736  
 FromELF: creating hex file...
 ".\Objects\MecanumJog.axf" - 0 Error(s), 0 Warning(s).
-Build Time Elapsed:  00:00:03
+Build Time Elapsed:  00:00:02

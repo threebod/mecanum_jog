@@ -84,6 +84,10 @@ static uint8_t routeActive, routeWaiting, routeIndex, routeStartZone, routeStep;
 static float routeX, routeY, routeYaw;
 static int16_t routeForward, routeRight;
 static uint32_t routeTick, routeLegStart, routeSettle;
+static uint8_t routeAuto, routeRotating, routeOnlyTurn, routeTurnInBand;
+static int8_t routeHeading, routeNextHeading;
+static float routeBaseYaw;
+static uint32_t routeTurnStart, routeTurnStable;
 
 static void serialSendChar(char value)
 {
@@ -186,6 +190,7 @@ static void stopAllMotors(void)
     motionMode = 0U;
     routeActive = 0U;
     routeWaiting = 0U;
+    routeRotating = routeOnlyTurn = routeTurnInBand = 0U;
     routeForward = routeRight = 0;
     for (id = MOTOR_MIN_ID; id <= TEST_MOTOR_ID; ++id) {
         Emm_V5_Stop_Now(id, false);
@@ -234,6 +239,8 @@ static void printHelp(void)
     serialSendString("  route step 1|2   pause at EVERY waypoint (arm)\r\n");
     serialSendString("  route next       continue from a stopped checkpoint\r\n");
     serialSendString("  route status     estimated position / checkpoint\r\n");
+    serialSendString("  route auto 1|2   full route with turns; NO station waits (arm)\r\n");
+    serialSendString("  turn L|R 1..180  relative IMU turn in clear space (arm)\r\n");
     serialSendString("  Route is a clear-floor test; no obstacle/QR/grasp detection.\r\n");
 }
 
@@ -867,7 +874,7 @@ static void serviceRoute(void)
     uint32_t now, dt, age;
     RoutePoint p;
     float yaw, error, dx, dy, remaining;
-    int16_t speed, turn;
+    int16_t speed, turn, bodyForward, bodyRight;
     uint8_t lateral;
     if (!routeActive || motionInterrupted()) return;
     now = clockMs;
@@ -878,17 +885,38 @@ static void serviceRoute(void)
     yaw = imuYaw; age = clockMs - imuStamp;
     __enable_irq();
     error = headingError(routeYaw, yaw);
-    if (!imuValid || age > 250U || routeAbs(error) > 20.0f || dt > 150U ||
+    if (!imuValid || age > 250U || (!routeRotating && routeAbs(error) > 20.0f) || dt > 150U ||
         now - routeLegStart > 45000U) {
         stopAllMotors();
         serialSendString("ERR ROUTE: IMU/deviation/control delay/leg timeout; aborted\r\n");
         return;
     }
     routeTick = now;
+    if (routeRotating) {
+        if (now - routeTurnStart > 18000U) {
+            stopAllMotors(); serialSendString("ERR TURN: timeout; aborted\r\n"); return;
+        }
+        if (routeAbs(error) <= 2.0f) {
+            sendRouteSpeeds(0, 0, 0);
+            if (!routeTurnInBand) { routeTurnStable = now; routeTurnInBand = 1U; }
+            if (now - routeTurnStable >= 200U) {
+                routeRotating = routeTurnInBand = 0U;
+                routeHeading = routeNextHeading;
+                routeLegStart = now;
+                if (routeOnlyTurn) {
+                    stopAllMotors(); serialSendString("TURN DONE within 2deg\r\n");
+                }
+            }
+        } else {
+            routeTurnInBand = 0U;
+            sendRouteSpeeds(0, 0, routeTurnSpeed(error, yawSign));
+        }
+        return;
+    }
     /* Integration only estimates travel. IMU constrains yaw, not XY drift. */
-    routeX += routeEstimate(routeRight, dt, 1U);
-    routeY += routeEstimate(routeForward, dt, 0U);
-    if (now - routeSettle < 300U) return;
+    routeX += routeEstimate(routeRight, dt, (uint8_t)(routeHeading == 0 || routeHeading == 2));
+    routeY += routeEstimate(routeForward, dt, (uint8_t)(routeHeading == 1 || routeHeading == -1));
+    if (!routeAuto && now - routeSettle < 300U) return;
     p = routePoint(routeIndex, routeStartZone);
     dx = p.x - routeX; dy = p.y - routeY;
     if (routeAbs(dx) <= 1.5f && routeAbs(dy) <= 1.5f) {
@@ -896,6 +924,14 @@ static void serviceRoute(void)
         if (motionInterrupted()) return;
         routeForward = routeRight = 0;
         routeX = p.x; routeY = p.y; /* snap NOMINAL coordinates only */
+        if (p.heading != 4 && p.heading != routeHeading) {
+            routeNextHeading = p.heading;
+            routeYaw = routeBaseYaw + p.heading * 90.0f * yawSign;
+            routeRotating = 1U; routeTurnInBand = 0U;
+            routeTurnStart = routeLegStart = clockMs;
+            serialSendString("ROUTE turning to station heading\r\n");
+            return;
+        }
         serialSendString("ROUTE estimated waypoint: ");
         serialSendUint((uint16_t)(routeIndex + 1U));
         if (p.event) { serialSendChar(' '); serialSendString(p.event); }
@@ -906,12 +942,12 @@ static void serviceRoute(void)
             return;
         }
         ++routeIndex;
-        routeWaiting = (uint8_t)(routeStep || p.event != 0);
+        routeWaiting = (uint8_t)(!routeAuto && (routeStep || p.event != 0));
         routeSettle = routeLegStart = clockMs;
         if (routeWaiting) serialSendString("WAIT: verify position / finish station work; send route next\r\n");
         return;
     }
-    /* All configured legs are axis aligned; chassis heading never rotates. */
+    /* Map-axis translation is transformed to the current body heading. */
     lateral = routeAbs(dx) > 1.5f;
     remaining = lateral ? routeAbs(dx) : routeAbs(dy);
     speed = routeSpeed(remaining, now - routeLegStart);
@@ -919,13 +955,36 @@ static void serviceRoute(void)
     routeForward = lateral ? 0 : (dy > 0 ? speed : -speed);
     turn = headingCorrection(error, yawSign);
     turn = (int16_t)(turn * speed / ROUTE_RPM);
-    sendRouteSpeeds(routeForward, routeRight, turn);
+    routeBody(routeForward, routeRight, routeHeading, &bodyForward, &bodyRight);
+    sendRouteSpeeds(bodyForward, bodyRight, turn);
 }
 
 static uint8_t processRouteCommand(const char *command)
 {
-    uint8_t start, step;
+    uint8_t start, step, autoRun;
+    uint16_t degrees;
+    const char *cursor;
     if (strcmp(command, "route status") == 0) { printRouteStatus(); return 1U; }
+    if (strncmp(command, "turn ", 5U) == 0) {
+        cursor = command + 7;
+        if (strlen(command) < 8U || (command[5] != 'L' && command[5] != 'R') ||
+            command[6] != ' ' || !parseUint(&cursor, &degrees) || *cursor != '\0' ||
+            degrees < 1U || degrees > 180U) {
+            serialSendString("ERR: turn L|R 1..180\r\n"); return 1U;
+        }
+        if (motionMode || routeActive || !armed || !imuValid || clockMs - imuStamp > 250U || motionInterrupted()) {
+            serialSendString("ERR: turn requires idle, arm, fresh IMU and healthy CAN\r\n"); return 1U;
+        }
+        armed = 0U;
+        routeYaw = imuYaw + (command[5] == 'L' ? degrees : -(float)degrees) * yawSign;
+        setAllMotorsEnabled(true);
+        if (motionInterrupted()) { stopAllMotors(); return 1U; }
+        routeForward = routeRight = 0;
+        routeTick = routeTurnStart = routeLegStart = clockMs;
+        routeWaiting = routeTurnInBand = 0U;
+        routeOnlyTurn = routeRotating = routeActive = 1U;
+        serialSendString("TURN running\r\n"); return 1U;
+    }
     if (strcmp(command, "route next") == 0) {
         if (!routeActive || !routeWaiting) {
             serialSendString("ERR: no waiting route\r\n"); return 1U;
@@ -939,18 +998,22 @@ static uint8_t processRouteCommand(const char *command)
         serialSendString("ROUTE continuing\r\n"); return 1U;
     }
     if (strcmp(command, "route start 1") != 0 && strcmp(command, "route start 2") != 0 &&
-        strcmp(command, "route step 1") != 0 && strcmp(command, "route step 2") != 0) return 0U;
+        strcmp(command, "route step 1") != 0 && strcmp(command, "route step 2") != 0 &&
+        strcmp(command, "route auto 1") != 0 && strcmp(command, "route auto 2") != 0) return 0U;
     if (motionMode || routeActive) { serialSendString("ERR: busy; stop first\r\n"); return 1U; }
     if (!armed) { serialSendString("ERR: send 'arm' first\r\n"); return 1U; }
     armed = 0U;
     if (!imuValid || clockMs - imuStamp > 250U || motionInterrupted()) {
         serialSendString("ERR: fresh IMU and healthy CAN required\r\n"); return 1U;
     }
-    step = command[8] == 'e'; /* route step vs route start */
-    start = (uint8_t)(command[step ? 11 : 12] - '0');
+    step = (uint8_t)(strncmp(command, "route step ", 11U) == 0);
+    autoRun = (uint8_t)(strncmp(command, "route auto ", 11U) == 0);
+    start = (uint8_t)(command[strlen(command) - 1U] - '0');
+    routeAuto = autoRun; routeHeading = routeNextHeading = 0;
+    routeRotating = routeOnlyTurn = routeTurnInBand = 0U;
     routeStartZone = start; routeStep = step; routeIndex = 0U;
     routeX = 2250.0f; routeY = start == 1U ? 2250.0f : 150.0f;
-    routeYaw = imuYaw;
+    routeBaseYaw = routeYaw = imuYaw;
     routeForward = routeRight = 0;
     setAllMotorsEnabled(true);
     if (motionInterrupted()) { stopAllMotors(); return 1U; }
