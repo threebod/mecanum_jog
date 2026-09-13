@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 /* Map coordinates in mm: origin bottom left, +X right, +Y up.
- * Robot nose stays up throughout. These are staging points, not grasp poses.
+ * Headings: 0 up, 1 left, 2 down, -1 right, 4 keep previous heading.
  * No wheel/ground odometry: progress is an estimate from commanded RPM.
  * Replace scales with measured actual_mm / nominal_mm on the test surface. */
 #define ROUTE_FORWARD_SCALE 1.0f
@@ -11,14 +11,14 @@
 #define ROUTE_MM_PER_REV    314.159265f /* pi * 100 mm, direct drive G=1 */
 #define ROUTE_RPM           20
 #define ROUTE_COUNT         16U
-typedef struct { int16_t x, y; const char *event; } RoutePoint;
+typedef struct { int16_t x, y; const char *event; int8_t heading; } RoutePoint;
 static const RoutePoint routeTemplate[ROUTE_COUNT] = {
-    {2100,2250,0}, {2100,1200,"QR"}, {2100,2100,0},
-    {1200,2100,"RAW_1"}, {1200,350,"COARSE_1_DROP_PICK"},
-    {1200,1200,0}, {350,1200,"TEMP_1_DROP"}, {1200,1200,0},
-    {1200,2100,"RAW_2"}, {1200,350,"COARSE_2_DROP_PICK"},
-    {1200,1200,0}, {350,1200,"TEMP_2_STACK"}, {1200,1200,0},
-    {2100,1200,0}, {2100,2250,0}, {2250,2250,"HOME"}
+    {2100,2250,0,4}, {2100,1200,"QR",-1}, {2100,2080,0,4},
+    {1200,2080,"RAW_1",0}, {1200,400,"COARSE_1_DROP_PICK",2},
+    {1200,1200,0,4}, {400,1200,"TEMP_1_DROP",1}, {1200,1200,0,4},
+    {1200,2080,"RAW_2",0}, {1200,400,"COARSE_2_DROP_PICK",2},
+    {1200,1200,0,4}, {400,1200,"TEMP_2_STACK",1}, {1200,1200,0,4},
+    {2100,1200,0,0}, {2100,2250,0,4}, {2250,2250,"HOME",4}
 };
 static RoutePoint routePoint(uint8_t index, uint8_t start)
 {
@@ -27,6 +27,26 @@ static RoutePoint routePoint(uint8_t index, uint8_t start)
     return p;
 }
 static float routeAbs(float value) { return value < 0.0f ? -value : value; }
+/* Convert map-axis RPM to body-axis RPM at a cardinal heading. */
+static void routeBody(int16_t mapUp, int16_t mapRight, int8_t heading,
+                      int16_t *forward, int16_t *right)
+{
+    switch (heading) {
+    case 1: *forward = -mapRight; *right = mapUp; break;
+    case 2: *forward = -mapUp; *right = -mapRight; break;
+    case -1: *forward = mapRight; *right = -mapUp; break;
+    default: *forward = mapUp; *right = mapRight; break;
+    }
+}
+static int16_t routeTurnSpeed(float error, int8_t sign)
+{
+    float speed = error * 0.5f;
+    if (speed > 10.0f) speed = 10.0f;
+    if (speed < -10.0f) speed = -10.0f;
+    if (speed > 0 && speed < 2) speed = 2;
+    if (speed < 0 && speed > -2) speed = -2;
+    return (int16_t)(speed * sign);
+}
 /* Positive lateral means right. IDs: FR=1 FL=2 RL=3 RR=4.
  * Matches existing W/S/A/D sign table, conventional X roller layout. */
 static int16_t routeWheel(uint8_t id, int16_t forward, int16_t right,

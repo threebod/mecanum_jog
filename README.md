@@ -1,6 +1,6 @@
 # 麦克纳姆轮串口点动测试例程
 
-已加入地图两轮底盘路线，支持蓝牙 `route step 1|2` 逐点测试、`route start 1|2` 工位等待模式、`route next` 继续和 `!` 急停。首次使用请阅读 [ROUTE_TEST.md](ROUTE_TEST.md)。路线距离是速度积分估计，尚未接入地面定位、随机避障、扫码及抓取流程。
+已加入地图两轮底盘路线和IMU闭环旋转，支持蓝牙 `route auto 1|2` 连续跑完整路线（无需工位确认）、`route step 1|2` 逐点测试、`route start 1|2` 工位等待模式、`route next` 继续、`turn L|R 90` 单独旋转和 `!` 急停。启动运动前先发 `arm`。首次使用请阅读 [ROUTE_TEST.md](ROUTE_TEST.md)。路线距离是速度积分估计，尚未接入地面定位、随机避障、扫码及抓取流程。
 
 已增加同步距离测试、IMU 航向保持、单轮验向和四轮 CAN 查询。完整新增命令、接线及落地测试步骤见 [STRAIGHT_TEST.md](STRAIGHT_TEST.md)。原有命令保留；新版本运动期间会拒绝叠加运动命令，等待测试窗口结束或先停车。
 
