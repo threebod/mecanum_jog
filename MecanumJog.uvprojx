@@ -447,7 +447,7 @@
             <File>
               <FileName>can.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\..\yyb_stm32\can_ZDT\can.c</FilePath>
+              <FilePath>.\jog_can.c</FilePath>
             </File>
             <File>
               <FileName>Emm_V5.c</FileName>
@@ -491,4 +491,3 @@
   </LayerInfo>
 
 </Project>
-
