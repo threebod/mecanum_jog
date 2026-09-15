@@ -2,6 +2,7 @@
 Objects/
 Listings/
 build.log
+build_*.log
 
 # Keil machine-specific files
 DebugConfig/
@@ -9,3 +10,6 @@ RTE/
 *.uvoptx
 *.uvguix.*
 *.bak
+
+# Editor-local state
+.vscode/
