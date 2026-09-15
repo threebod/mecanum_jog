@@ -26,6 +26,7 @@ static uint8_t motionMode,armed,imuValid=1,emergencyStop,jogCanFault;
 static int8_t routeHeading,routeNextHeading,yawSign=1;
 static float routeX,routeY,routeYaw,routeBaseYaw,imuYaw;
 static float routeDriveRpm,routeTurnRpm,routeCorrection;
+static uint16_t routeRpm=ROUTE_RPM;
 static uint8_t routeSentValid;
 static int16_t routeSent[4], staged[4];
 static const uint8_t motorDirections[1][5]={{1,1,0,0,1}};
@@ -93,7 +94,7 @@ int main(void) {
     };
     unsigned n,start,target; int sign;
     int16_t previous,peak;
-    char cmd[24];
+    char cmd[32];
     sendRouteSpeeds(20,0,0);assert(batches==1 && writes==4);
     sendRouteSpeeds(20,0,0);assert(batches==1 && writes==4);
     sendRouteSpeeds(0,20,0);assert(batches==2 && writes==8);
@@ -103,6 +104,7 @@ int main(void) {
         stopAllMotors(); yawSign=(int8_t)sign; imuYaw=179; turnTicks=0; armed=1;
         sprintf(cmd,"route auto %u",start);
         assert(processRouteCommand(cmd) && routeActive && routeAuto);
+        assert(routeRpm==ROUTE_RPM);
         for(n=0;n<30000 && routeActive;++n) {tick();assert(!routeWaiting);}
         assert(!routeActive && routeIndex==ROUTE_COUNT-1 && routeHeading==0);
         assert(routeX==2250 && routeY==(start==1?2250:150));
@@ -135,8 +137,9 @@ int main(void) {
             assert(processNavCommand(cmd) && navInitialized &&
                    navCurrentNode==navStartNode((uint8_t)start));
             armed=1;navPosReports=navDoneReports=0;
-            sprintf(cmd,"nav goto %d %d",destination.x,destination.y);
+            sprintf(cmd,"nav goto %d %d 120",destination.x,destination.y);
             assert(processNavCommand(cmd) && navRunning);
+            assert(routeRpm==120);
             for(n=0;n<12000 && navRunning;++n) tick();
             assert(navInitialized && !navRunning && navCurrentNode==targetNode[target]);
             assert(routeX==destination.x && routeY==destination.y);
@@ -154,6 +157,9 @@ int main(void) {
     navInvalidReports=0;clockMs+=20;imuStamp=clockMs-300;serviceRoute();
     assert(!navInitialized && !navRunning && navInvalidReports==1);
     assert(processNavCommand("nav goto 1200 1200") && !navRunning);
+    armed=1;imuStamp=clockMs;assert(processRouteCommand("route auto 1 120") && routeRpm==120);
+    stopAllMotors();armed=1;imuStamp=clockMs;
+    assert(processRouteCommand("route auto 1 121") && !routeActive);
     for(sign=-1;sign<=1;sign+=2) {
         stopAllMotors(); straightLateral=1;straightDirection=(int16_t)sign;
         straightRpm=60;motionDuration=2000;motionStart=lastControl=clockMs;

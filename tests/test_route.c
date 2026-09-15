@@ -73,8 +73,8 @@ int main(void)
     assert(routeWheel(4,0,0,5,1000) == 5);
     assert(routeAbs(routeEstimate(60,1000,0)-314.159265f) < 0.001f);
     assert(routeAbs(routeEstimate(-60,1000,1)+314.159265f) < 0.001f);
-    assert(routeSpeed(1000,1000) == 60);
-    assert(routeSpeed(5,1000) < routeSpeed(100,1000));
+    assert(routeSpeed(1000,1000,120) == 120);
+    assert(routeSpeed(5,1000,120) < routeSpeed(100,1000,120));
     routeBody(20,0,1,&forward,&right); assert(forward==0 && right==20);
     routeBody(20,0,-1,&forward,&right); assert(forward==0 && right==-20);
     routeBody(0,20,1,&forward,&right); assert(forward==-20 && right==0);
@@ -84,9 +84,9 @@ int main(void)
     assert(routeTurnSpeed(90,1)==30 && routeTurnSpeed(-90,1)==-30);
     assert(routeTurnSpeed(90,-1)==-30 && routeTurnSpeed(-90,-1)==30);
     assert(routeTurnSpeed(3,1)==3);
-    assert(routeSpeed(1000,0)==0);
-    assert(routeSpeed(1000,350)==30);
-    assert(routeSpeed(5,1000)>3); /* no long minimum-speed crawl */
+    assert(routeSpeed(1000,0,60)==0);
+    assert(routeSpeed(1000,350,60)==30);
+    assert(routeSpeed(5,1000,60)>3); /* no long minimum-speed crawl */
     assert(routeAbs(routeSlew(0,60,120,20)-2.4f)<0.001f);
     assert(routeAbs(routeSlew(30,-30,90,20)-28.2f)<0.001f);
     assert(routeRound(-1.6f)==-2 && routeRound(1.6f)==2);

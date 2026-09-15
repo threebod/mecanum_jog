@@ -13,7 +13,8 @@
 
 #define MOTOR_MIN_ID       1U
 #define MOTOR_MAX_ID       4U
-#define TEST_MOTOR_ID      5U
+#define AUX_MOTOR_MIN_ID   5U
+#define AUX_MOTOR_MAX_ID   6U
 #define MOTOR_TEST_SPEED   30U
 #define MOTOR_TEST_ACCEL   50U
 #define MOTOR_TEST_PULSES  160U
@@ -96,6 +97,7 @@ static uint8_t navInitialized, navRunning, navCurrentNode;
 static uint8_t navPath[NAV_NODE_COUNT], navPathCount;
 static uint32_t navLastReport;
 static float routeDriveRpm, routeTurnRpm, routeCorrection;
+static uint16_t routeRpm = ROUTE_RPM;
 static int16_t routeSent[4];
 static uint8_t routeSentValid;
 static uint8_t straightLateral;
@@ -226,6 +228,16 @@ static void stopDriveMotors(void)
     }
 }
 
+static void stopAuxMotors(void)
+{
+    uint8_t id;
+
+    for (id = AUX_MOTOR_MIN_ID; id <= AUX_MOTOR_MAX_ID; ++id) {
+        Emm_V5_Stop_Now(id, false);
+        delay_ms(2U);
+    }
+}
+
 static void stopAllMotors(void)
 {
 
@@ -241,8 +253,7 @@ static void stopAllMotors(void)
     navRunning = 0U;
     navPathCount = 0U;
     stopDriveMotors();
-    Emm_V5_Stop_Now(TEST_MOTOR_ID, false);
-    delay_ms(2U);
+    stopAuxMotors();
     armed = 0U;
 }
 
@@ -256,18 +267,23 @@ static void setAllMotorsEnabled(bool enabled)
     }
 }
 
+static void setAuxMotorsEnabled(bool enabled)
+{
+    uint8_t id;
+
+    for (id = AUX_MOTOR_MIN_ID; id <= AUX_MOTOR_MAX_ID; ++id) {
+        Emm_V5_En_Control(id, enabled, false);
+        delay_ms(2U);
+    }
+}
+
 static void printHelp(void)
 {
     serialSendString("\r\nMecanum jog commands:\r\n");
-    serialSendString("  arm       authorize ONE enable or motion command\r\n");
-    serialSendString("  enable    enable motors 1..4 (armed)\r\n");
-    serialSendString("  disable   disable motors 1..4 and disarm\r\n");
-    serialSendString("  enable5   enable diagnostic motor 5 (armed)\r\n");
-    serialSendString("  motor5 0  jog motor 5 in direction 0 (armed)\r\n");
-    serialSendString("  motor5 1  jog motor 5 in direction 1 (armed)\r\n");
-    serialSendString("  disable5  stop and disable motor 5\r\n");
-    serialSendString("  cancheck5 query motor 5 CAN status\r\n");
-    serialSendString("  cancheck N query motor 1..5 CAN status\r\n");
+    serialSendString("  arm       authorize ONE motion command\r\n");
+    serialSendString("  disable   stop/disable motors 1..6 and disarm\r\n");
+    serialSendString("  motor N D jog motor 5|6 in direction 0|1 (armed)\r\n");
+    serialSendString("  cancheck N query motor 1..6 CAN status\r\n");
     serialSendString("  servo N A set servo 2..4 to angle A\r\n");
     serialSendString("  W/S/A/D   forward/back/left/right\r\n");
     serialSendString("  X, stop   stop motors/servo motion and disarm\r\n");
@@ -275,21 +291,21 @@ static void printHelp(void)
     serialSendString("  help      show this help\r\n");
     serialSendString("  line W 100 30   synced forward 100mm at 30rpm (arm)\r\n");
     serialSendString("  straight W 2000 30  IMU heading hold, 2000ms (arm)\r\n");
-    serialSendString("  line: W/S; straight: W/S/A/D; max 500mm/5000ms, 10..60rpm\r\n");
+    serialSendString("  line: W/S, 100..500mm step 100; straight: W/S/A/D; 10..120rpm\r\n");
     serialSendString("  wheel 1 0      single wheel 1..4, raw dir 0/1 (arm)\r\n");
     serialSendString("  invert 1 1     reverse wheel 1..4 mapping, 0/1\r\n");
     serialSendString("  trim 1 1000    wheel scale 900..1100, RAM only\r\n");
     serialSendString("  imu 115200     IMU baud 9600/115200, PD5 TX / PD6 RX\r\n");
     serialSendString("  yawdir 0       correction sign: 0 normal, 1 reversed\r\n");
     serialSendString("  status         yaw, age, wheel mapping and trims\r\n");
-    serialSendString("  route start 1|2  enable and run map route (arm, nose UP)\r\n");
-    serialSendString("  route step 1|2   pause at EVERY waypoint (arm)\r\n");
+    serialSendString("  route start 1|2 [rpm]  run map route (arm, nose UP)\r\n");
+    serialSendString("  route step 1|2 [rpm]   pause at EVERY waypoint (arm)\r\n");
     serialSendString("  route next       continue from a stopped checkpoint\r\n");
     serialSendString("  route status     estimated position / checkpoint\r\n");
-    serialSendString("  route auto 1|2   full route with turns; NO station waits (arm)\r\n");
+    serialSendString("  route auto 1|2 [rpm]   full route; rpm 10..120 (arm)\r\n");
     serialSendString("  turn L|R 1..180  relative IMU turn in clear space (arm)\r\n");
     serialSendString("  nav init 1|2       set estimated start pose; fresh IMU, idle\r\n");
-    serialSendString("  nav goto X Y       move to an exact safe waypoint (arm)\r\n");
+    serialSendString("  nav goto X Y [rpm] move to safe waypoint; rpm 10..120 (arm)\r\n");
     serialSendString("  nav status         estimated navigation state\r\n");
     serialSendString("  Route is a clear-floor test; no obstacle/QR/grasp detection.\r\n");
 }
@@ -725,6 +741,34 @@ static uint8_t parsePair(const char *cursor, uint16_t *a, uint16_t *b)
     return *cursor == '\0';
 }
 
+static uint8_t parsePairWithOptionalRpm(const char *cursor, uint16_t *a,
+                                        uint16_t *b, uint16_t *rpm)
+{
+    if (!parseUint(&cursor, a) || *cursor != ' ') return 0U;
+    ++cursor;
+    if (!parseUint(&cursor, b)) return 0U;
+    if (*cursor == '\0') {
+        *rpm = ROUTE_RPM;
+        return 1U;
+    }
+    if (*cursor != ' ') return 0U;
+    ++cursor;
+    return parseUint(&cursor, rpm) && *cursor == '\0';
+}
+
+static uint8_t parseValueWithOptionalRpm(const char *cursor, uint16_t *value,
+                                         uint16_t *rpm)
+{
+    if (!parseUint(&cursor, value)) return 0U;
+    if (*cursor == '\0') {
+        *rpm = ROUTE_RPM;
+        return 1U;
+    }
+    if (*cursor != ' ') return 0U;
+    ++cursor;
+    return parseUint(&cursor, rpm) && *cursor == '\0';
+}
+
 static void startLine(const char *cursor, uint8_t heading)
 {
     uint16_t amount, rpm;
@@ -732,10 +776,9 @@ static void startLine(const char *cursor, uint8_t heading)
     char way = *cursor++;
     uint32_t pulses;
     if ((way != 'W' && way != 'S' && (!heading || (way != 'A' && way != 'D'))) || *cursor != ' ' ||
-        !parsePair(cursor, &amount, &rpm) || rpm < 10U || rpm > 60U ||
-        (heading && (amount < 1000U || amount > 5000U)) ||
-        (!heading && (amount < 20U || amount > 500U))) {
-        serialSendString("ERR: line W|S 20..500 10..60; straight W|S|A|D 1000..5000 10..60\r\n");
+        !parsePair(cursor, &amount, &rpm) ||
+        !motionRequestValid(heading, amount, rpm)) {
+        serialSendString("ERR: line W|S 100..500(step100); straight W|S|A|D 1000..5000; rpm 10..120\r\n");
         return;
     }
     if (!armed) { serialSendString("ERR: send 'arm' first\r\n"); return; }
@@ -743,6 +786,11 @@ static void startLine(const char *cursor, uint8_t heading)
     invalidateNavigation("manual_motion");
     if (heading && (!imuValid || clockMs - imuStamp > 250U)) {
         serialSendString("ERR: fresh IMU yaw required; check baud/wiring/status\r\n");
+        return;
+    }
+    setAllMotorsEnabled(true);
+    if (motionInterrupted()) {
+        stopAllMotors();
         return;
     }
     if (heading) {
@@ -807,6 +855,11 @@ static void startJog(MecanumDirection direction, const char *name)
     }
     armed = 0U;
     invalidateNavigation("manual_motion");
+    setAllMotorsEnabled(true);
+    if (motionInterrupted()) {
+        stopAllMotors();
+        return;
+    }
 
     for (id = MOTOR_MIN_ID; id <= MOTOR_MAX_ID; ++id) {
         if (motionInterrupted()) {
@@ -830,7 +883,7 @@ static void startJog(MecanumDirection direction, const char *name)
     serialSendString(", auto-disarmed\r\n");
 }
 
-static void startMotor5Jog(uint8_t direction)
+static void startAuxMotorJog(uint8_t motorId, uint8_t direction)
 {
     if (!armed) {
         serialSendString("ERR: send 'arm' first\r\n");
@@ -838,10 +891,18 @@ static void startMotor5Jog(uint8_t direction)
     }
     armed = 0U;
 
-    Emm_V5_Pos_Control(TEST_MOTOR_ID, direction,
+    Emm_V5_En_Control(motorId, true, false);
+    delay_ms(2U);
+    if (motionInterrupted()) {
+        stopAllMotors();
+        return;
+    }
+    Emm_V5_Pos_Control(motorId, direction,
                        MOTOR_TEST_SPEED, MOTOR_TEST_ACCEL,
                        MOTOR_TEST_PULSES, false, false);
-    serialSendString("TX queued: motor 5 direction ");
+    serialSendString("TX queued: motor ");
+    serialSendUint(motorId);
+    serialSendString(" direction ");
     serialSendString(direction == 0U ? "0" : "1");
     serialSendString(", auto-disarmed\r\n");
 }
@@ -1128,14 +1189,14 @@ static void serviceRoute(void)
     /* Map-axis translation is transformed to the current body heading. */
     lateral = routeAbs(dx) > 1.5f;
     remaining = lateral ? routeAbs(dx) : routeAbs(dy);
-    speed = routeSpeed(remaining, now - routeLegStart);
+    speed = routeSpeed(remaining, now - routeLegStart, routeRpm);
     routeDriveRpm = routeSlew(routeDriveRpm, speed, ROUTE_ACCEL_RPM_S, dt);
     speed = routeRound(routeDriveRpm);
     routeRight = lateral ? (dx > 0 ? speed : -speed) : 0;
     routeForward = lateral ? 0 : (dy > 0 ? speed : -speed);
     turn = routeAbs(error) < 0.6f ? 0 : headingCorrection(error, yawSign);
     routeCorrection = routeSlew(routeCorrection,
-        (float)turn * speed / ROUTE_RPM, 30.0f, dt);
+        (float)turn * speed / routeRpm, 30.0f, dt);
     turn = routeRound(routeCorrection);
     routeBody(routeForward, routeRight, routeHeading, &bodyForward, &bodyRight);
     sendRouteSpeeds(bodyForward, bodyRight, turn);
@@ -1146,6 +1207,7 @@ static uint8_t processNavCommand(const char *command)
     NavPoint startPoint;
     uint16_t x;
     uint16_t y;
+    uint16_t rpm;
     uint8_t node;
 
     if (strcmp(command, "nav status") == 0) {
@@ -1181,8 +1243,9 @@ static uint8_t processNavCommand(const char *command)
         return 1U;
     }
     if (strncmp(command, "nav goto ", 9U) != 0) return 0U;
-    if (!parsePair(command + 9, &x, &y)) {
-        serialSendString("ERR NAV: use nav goto X Y\r\n");
+    if (!parsePairWithOptionalRpm(command + 9, &x, &y, &rpm) ||
+        rpm < 10U || rpm > 120U) {
+        serialSendString("ERR NAV: use nav goto X Y [10..120rpm]\r\n");
         return 1U;
     }
     node = navNodeAt((int16_t)x, (int16_t)y);
@@ -1216,6 +1279,7 @@ static uint8_t processNavCommand(const char *command)
         return 1U;
     }
     navRunning = 1U;
+    routeRpm = rpm;
     routeActive = routeAuto = 1U;
     routeWaiting = routeStep = 0U;
     routeRotating = routeOnlyTurn = routeTurnInBand = 0U;
@@ -1238,7 +1302,7 @@ static uint8_t processNavCommand(const char *command)
 static uint8_t processRouteCommand(const char *command)
 {
     uint8_t start, step, autoRun;
-    uint16_t degrees;
+    uint16_t degrees, rpm;
     const char *cursor;
     if (strcmp(command, "route status") == 0) { printRouteStatus(); return 1U; }
     if (strncmp(command, "turn ", 5U) == 0) {
@@ -1275,9 +1339,21 @@ static uint8_t processRouteCommand(const char *command)
         routeTick = routeSettle = routeLegStart = clockMs;
         serialSendString("ROUTE continuing\r\n"); return 1U;
     }
-    if (strcmp(command, "route start 1") != 0 && strcmp(command, "route start 2") != 0 &&
-        strcmp(command, "route step 1") != 0 && strcmp(command, "route step 2") != 0 &&
-        strcmp(command, "route auto 1") != 0 && strcmp(command, "route auto 2") != 0) return 0U;
+    if (strncmp(command, "route start ", 12U) == 0) {
+        cursor = command + 12U;
+        step = autoRun = 0U;
+    } else if (strncmp(command, "route step ", 11U) == 0) {
+        cursor = command + 11U;
+        step = 1U; autoRun = 0U;
+    } else if (strncmp(command, "route auto ", 11U) == 0) {
+        cursor = command + 11U;
+        step = 0U; autoRun = 1U;
+    } else return 0U;
+    if (!parseValueWithOptionalRpm(cursor, &degrees, &rpm) ||
+        degrees < 1U || degrees > 2U || rpm < 10U || rpm > 120U) {
+        serialSendString("ERR: route start|step|auto 1|2 [10..120rpm]\r\n");
+        return 1U;
+    }
     if (motionMode || routeActive) { serialSendString("ERR: busy; stop first\r\n"); return 1U; }
     if (!armed) { serialSendString("ERR: send 'arm' first\r\n"); return 1U; }
     armed = 0U;
@@ -1285,9 +1361,8 @@ static uint8_t processRouteCommand(const char *command)
         serialSendString("ERR: fresh IMU and healthy CAN required\r\n"); return 1U;
     }
     invalidateNavigation("manual_motion");
-    step = (uint8_t)(strncmp(command, "route step ", 11U) == 0);
-    autoRun = (uint8_t)(strncmp(command, "route auto ", 11U) == 0);
-    start = (uint8_t)(command[strlen(command) - 1U] - '0');
+    start = (uint8_t)degrees;
+    routeRpm = rpm;
     routeAuto = autoRun; routeHeading = routeNextHeading = 0;
     routeDriveRpm = routeTurnRpm = routeCorrection = 0.0f;
     routeSentValid = 0U;
@@ -1337,9 +1412,18 @@ static void processCommand(const char *command)
     if (strcmp(command, "status") == 0) { printStatus(); return; }
     if (strncmp(command, "cancheck ", 9U) == 0) {
         const char *cursor = command + 9;
-        if (!parseUint(&cursor, &id) || *cursor != '\0' || id < 1U || id > 5U) {
-            serialSendString("ERR: cancheck 1..5\r\n");
+        if (!parseUint(&cursor, &id) || *cursor != '\0' || id < 1U || id > 6U) {
+            serialSendString("ERR: cancheck 1..6\r\n");
         } else checkMotorCan((uint8_t)id);
+        return;
+    }
+    if (strncmp(command, "motor ", 6U) == 0) {
+        if (!parsePair(command + 6, &id, &value) ||
+            id < AUX_MOTOR_MIN_ID || id > AUX_MOTOR_MAX_ID || value > 1U) {
+            serialSendString("ERR: motor 5|6 0|1\r\n");
+            return;
+        }
+        startAuxMotorJog((uint8_t)id, (uint8_t)value);
         return;
     }
     if (strcmp(command, "imu 9600") == 0 || strcmp(command, "imu 115200") == 0) {
@@ -1368,6 +1452,9 @@ static void processCommand(const char *command)
             if (!armed) { serialSendString("ERR: send 'arm' first\r\n"); return; }
             armed = 0U;
             invalidateNavigation("manual_motion");
+            Emm_V5_En_Control((uint8_t)id, true, false);
+            delay_ms(2U);
+            if (motionInterrupted()) { stopAllMotors(); return; }
             Emm_V5_Pos_Control((uint8_t)id, (uint8_t)value, MOTOR_TEST_SPEED,
                               MOTOR_TEST_ACCEL, MOTOR_TEST_PULSES, false, false);
             motionMode = 1U;
@@ -1385,39 +1472,12 @@ static void processCommand(const char *command)
     if (strcmp(command, "arm") == 0) {
         armed = 1U;
         serialSendString("ARMED for one enable or motion command\r\n");
-    } else if (strcmp(command, "enable") == 0) {
-        if (!armed) {
-            serialSendString("ERR: send 'arm' first\r\n");
-            return;
-        }
-        armed = 0U;
-        setAllMotorsEnabled(true);
-        serialSendString("OK: motors 1..4 enabled, auto-disarmed\r\n");
     } else if (strcmp(command, "disable") == 0) {
         stopAllMotors();
         setAllMotorsEnabled(false);
+        setAuxMotorsEnabled(false);
         armed = 0U;
-        serialSendString("OK: motors 1..4 disabled and disarmed\r\n");
-    } else if (strcmp(command, "enable5") == 0) {
-        if (!armed) {
-            serialSendString("ERR: send 'arm' first\r\n");
-            return;
-        }
-        armed = 0U;
-        Emm_V5_En_Control(TEST_MOTOR_ID, true, false);
-        serialSendString("OK: motor 5 enabled, auto-disarmed\r\n");
-    } else if (strcmp(command, "motor5 0") == 0) {
-        startMotor5Jog(0U);
-    } else if (strcmp(command, "motor5 1") == 0) {
-        startMotor5Jog(1U);
-    } else if (strcmp(command, "disable5") == 0) {
-        Emm_V5_Stop_Now(TEST_MOTOR_ID, false);
-        delay_ms(2U);
-        Emm_V5_En_Control(TEST_MOTOR_ID, false, false);
-        armed = 0U;
-        serialSendString("OK: motor 5 stopped, disabled and disarmed\r\n");
-    } else if (strcmp(command, "cancheck5") == 0) {
-        checkMotorCan(TEST_MOTOR_ID);
+        serialSendString("OK: motors 1..6 disabled and disarmed\r\n");
     } else if (strncmp(command, "servo ", 6U) == 0) {
         processServoCommand(command);
     } else if (strcmp(command, "W") == 0 || strcmp(command, "w") == 0) {
@@ -1488,7 +1548,7 @@ int main(void)
     imuInit(115200U);
 
     stopAllMotors();
-    serialSendString("\r\nYYB mecanum/servo jog ready; motors 1..5 stopped; disarmed.\r\n");
+    serialSendString("\r\nYYB mecanum/servo jog ready; motors 1..6 stopped; disarmed.\r\n");
     printHelp();
 
     for (;;) {
@@ -1509,7 +1569,7 @@ int main(void)
             rxReady = 0U;
             __enable_irq();
             if (hadNavigation) serialSendString("NAV INVALID reason=emergency_stop\r\n");
-            serialSendString("EMERGENCY STOP; motors 1..5 stopped; disarmed\r\n");
+            serialSendString("EMERGENCY STOP; motors 1..6 stopped; disarmed\r\n");
         }
 
         if (rxReady) {

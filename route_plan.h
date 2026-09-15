@@ -77,10 +77,11 @@ static int16_t routeRound(float value)
 }
 /* Cubic smooth-start + constant-deceleration braking envelope.
  * Unlike linear remaining-distance P control, this avoids a long crawl tail. */
-static int16_t routeSpeed(float remaining, uint32_t elapsed)
+static int16_t routeSpeed(float remaining, uint32_t elapsed,
+                          uint16_t maximumRpm)
 {
     float t = elapsed < 700U ? elapsed / 700.0f : 1.0f;
-    float speed = ROUTE_RPM * t * t * (3.0f - 2.0f * t);
+    float speed = maximumRpm * t * t * (3.0f - 2.0f * t);
     float brake = sqrtf(2.0f * ROUTE_ACCEL_RPM_S * (remaining > 0 ? remaining : 0) /
                         (ROUTE_MM_PER_REV / 60.0f));
     if (speed > brake) speed = brake;
