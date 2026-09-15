@@ -4,8 +4,9 @@ $exampleRoot = Split-Path -Parent $PSScriptRoot
 $mainPath = Join-Path $exampleRoot 'main.c'
 $projectPath = Join-Path $exampleRoot 'MecanumJog.uvprojx'
 $readmePath = Join-Path $exampleRoot 'README.md'
+$navigationPath = Join-Path $exampleRoot 'map_navigation.h'
 
-foreach ($path in @($mainPath, $projectPath, $readmePath)) {
+foreach ($path in @($mainPath, $projectPath, $readmePath, $navigationPath)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Missing required file: $path"
     }
@@ -21,6 +22,7 @@ $requiredMainPatterns = @(
     '#define MOTOR_TEST_PULSES\s+160U',
     '#define TEST_MOTOR_ID\s+5U',
     '#define CAN_CHECK_TIMEOUT_MS\s+300U',
+    '#define HOST_HEARTBEAT_TIMEOUT_MS\s+1000U',
     '#define SERVO_MIN_PULSE_US\s+500U',
     '#define SERVO_PULSE_RANGE_US\s+2000U',
     '#define SERVO_PERIOD_US\s+20000U',
@@ -30,9 +32,12 @@ $requiredMainPatterns = @(
     'GPIO_PinAFConfig\(GPIOD, GPIO_PinSource2, GPIO_AF_UART5\)',
     'void UART5_IRQHandler\(void\)',
     'void TIM2_IRQHandler\(void\)',
+    '(?s)static void serviceHostWatchdog\(void\).*?hostHeartbeatActive = 0U;.*?stopServoMotion\(\);.*?stopAllMotors\(\);.*?ERR: host heartbeat timeout; stopped',
+    '(?s)static void processCommand\(const char \*command\).*?strcmp\(command, "hb"\) == 0.*?hostHeartbeatActive = 1U;.*?hostHeartbeatStamp = clockMs;.*?return;.*?processRouteCommand\(command\)',
+    '(?s)for \(;;\).*?serviceHostWatchdog\(\);.*?serviceMotion\(\);',
     "received == '!'",
     'else if \(!emergencyStop &&',
-    'if \(emergencyStop\)\s*\{\s*stopServoMotion\(\);\s*stopAllMotors\(\);\s*__disable_irq\(\);\s*emergencyStop = 0U;',
+    '(?s)if \(emergencyStop\)\s*\{.*?stopServoMotion\(\);.*?stopAllMotors\(\);.*?__disable_irq\(\);.*?emergencyStop = 0U;',
     'static void setAllMotorsEnabled\(bool enabled\)',
     'Emm_V5_En_Control\(id, enabled, false\)',
     '(?s)strcmp\(command, "enable"\) == 0.*?if \(!armed\).*?armed = 0U;.*?setAllMotorsEnabled\(true\)',
@@ -50,7 +55,9 @@ $requiredMainPatterns = @(
     'CAN1->TSR',
     'TX queued: chassis ',
     'TX queued: motor 5 direction ',
-    'for \(id = MOTOR_MIN_ID; id <= TEST_MOTOR_ID; \+\+id\)',
+    '(?s)static void stopDriveMotors\(void\).*?id <= MOTOR_MAX_ID.*?Emm_V5_Stop_Now\(id, false\)',
+    '(?s)static void stopAllMotors\(void\).*?stopDriveMotors\(\);.*?Emm_V5_Stop_Now\(TEST_MOTOR_ID, false\)',
+    '(?s)static uint8_t processNavCommand\(const char \*command\).*?nav init 1.*?nav init 2.*?nav goto .*?navShortestPath',
     'Emm_V5_Synchronous_motion\(0x00\)',
     '(?s)static CommandResult parseServoCommand\(const char \*line,.*?channel < 2U \|\| channel > 4U.*?channel < 4U && angle > 270U.*?channel == 4U && angle > 360U',
     '(?s)strncmp\(command, "servo ", 6U\) == 0.*?processServoCommand\(command\)',

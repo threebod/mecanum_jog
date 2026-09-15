@@ -6,6 +6,7 @@
 #include <string.h>
 #include "straight_control.h"
 #include "route_plan.h"
+#include "map_navigation.h"
 
 #define COMMAND_BAUD_RATE  115200U
 #define RX_LINE_SIZE       24U
@@ -17,6 +18,7 @@
 #define MOTOR_TEST_ACCEL   50U
 #define MOTOR_TEST_PULSES  160U
 #define CAN_CHECK_TIMEOUT_MS  300U
+#define HOST_HEARTBEAT_TIMEOUT_MS  1000U
 
 #define SERVO_MIN_PULSE_US    500U
 #define SERVO_PULSE_RANGE_US  2000U
@@ -65,6 +67,8 @@ static volatile uint32_t currentAngleMdeg[3];
 static volatile uint32_t targetAngleMdeg[3];
 extern volatile uint8_t jogCanFault;
 static volatile uint32_t clockMs;
+static uint8_t hostHeartbeatActive;
+static uint32_t hostHeartbeatStamp;
 static volatile float imuYaw;
 static volatile uint32_t imuStamp;
 static volatile uint8_t imuValid;
@@ -88,6 +92,9 @@ static uint8_t routeAuto, routeRotating, routeOnlyTurn, routeTurnInBand;
 static int8_t routeHeading, routeNextHeading;
 static float routeBaseYaw;
 static uint32_t routeTurnStart, routeTurnStable;
+static uint8_t navInitialized, navRunning, navCurrentNode;
+static uint8_t navPath[NAV_NODE_COUNT], navPathCount;
+static uint32_t navLastReport;
 
 static void serialSendChar(char value)
 {
@@ -142,6 +149,26 @@ static void serialSendUint(uint16_t value)
     }
 }
 
+static void serialSendInt(int16_t value)
+{
+    if (value < 0) {
+        serialSendChar('-');
+        value = (int16_t)-value;
+    }
+    serialSendUint((uint16_t)value);
+}
+
+static void invalidateNavigation(const char *reason)
+{
+    if (!navInitialized) return;
+    navInitialized = 0U;
+    navRunning = 0U;
+    navPathCount = 0U;
+    serialSendString("NAV INVALID reason=");
+    serialSendString(reason);
+    serialSendString("\r\n");
+}
+
 static void serialInit(void)
 {
     GPIO_InitTypeDef gpio;
@@ -183,19 +210,30 @@ static void serialInit(void)
     USART_Cmd(UART5, ENABLE);
 }
 
-static void stopAllMotors(void)
+static void stopDriveMotors(void)
 {
     uint8_t id;
+
+    for (id = MOTOR_MIN_ID; id <= MOTOR_MAX_ID; ++id) {
+        Emm_V5_Stop_Now(id, false);
+        delay_ms(2U);
+    }
+}
+
+static void stopAllMotors(void)
+{
 
     motionMode = 0U;
     routeActive = 0U;
     routeWaiting = 0U;
     routeRotating = routeOnlyTurn = routeTurnInBand = 0U;
     routeForward = routeRight = 0;
-    for (id = MOTOR_MIN_ID; id <= TEST_MOTOR_ID; ++id) {
-        Emm_V5_Stop_Now(id, false);
-        delay_ms(2U);
-    }
+    navInitialized = 0U;
+    navRunning = 0U;
+    navPathCount = 0U;
+    stopDriveMotors();
+    Emm_V5_Stop_Now(TEST_MOTOR_ID, false);
+    delay_ms(2U);
     armed = 0U;
 }
 
@@ -241,6 +279,9 @@ static void printHelp(void)
     serialSendString("  route status     estimated position / checkpoint\r\n");
     serialSendString("  route auto 1|2   full route with turns; NO station waits (arm)\r\n");
     serialSendString("  turn L|R 1..180  relative IMU turn in clear space (arm)\r\n");
+    serialSendString("  nav init 1|2       set estimated start pose; fresh IMU, idle\r\n");
+    serialSendString("  nav goto X Y       move to an exact safe waypoint (arm)\r\n");
+    serialSendString("  nav status         estimated navigation state\r\n");
     serialSendString("  Route is a clear-floor test; no obstacle/QR/grasp detection.\r\n");
 }
 
@@ -433,6 +474,22 @@ static void stopServoMotion(void)
     }
     completedServoChannels = 0U;
     __enable_irq();
+}
+
+static void serviceHostWatchdog(void)
+{
+    uint8_t hadNavigation;
+    if (!hostHeartbeatActive ||
+        clockMs - hostHeartbeatStamp <= HOST_HEARTBEAT_TIMEOUT_MS) {
+        return;
+    }
+
+    hostHeartbeatActive = 0U;
+    hadNavigation = navInitialized;
+    stopServoMotion();
+    stopAllMotors();
+    if (hadNavigation) serialSendString("NAV INVALID reason=heartbeat_timeout\r\n");
+    serialSendString("ERR: host heartbeat timeout; stopped\r\n");
 }
 
 static void processServoCommand(const char *commandText)
@@ -681,6 +738,7 @@ static void startLine(const char *cursor, uint8_t heading)
     }
     if (!armed) { serialSendString("ERR: send 'arm' first\r\n"); return; }
     armed = 0U;
+    invalidateNavigation("manual_motion");
     if (heading && (!imuValid || clockMs - imuStamp > 250U)) {
         serialSendString("ERR: fresh IMU yaw required; check baud/wiring/status\r\n");
         return;
@@ -743,6 +801,7 @@ static void startJog(MecanumDirection direction, const char *name)
         return;
     }
     armed = 0U;
+    invalidateNavigation("manual_motion");
 
     for (id = MOTOR_MIN_ID; id <= MOTOR_MAX_ID; ++id) {
         if (motionInterrupted()) {
@@ -869,6 +928,70 @@ static void sendRouteSpeeds(int16_t forward, int16_t right, int16_t turn)
     if (!motionInterrupted()) Emm_V5_Synchronous_motion(0x00);
 }
 
+static int16_t navFieldYawCdeg(void)
+{
+    float fieldYaw = 90.0f + headingError(imuYaw, routeBaseYaw) * yawSign;
+    while (fieldYaw > 180.0f) fieldYaw -= 360.0f;
+    while (fieldYaw <= -180.0f) fieldYaw += 360.0f;
+    return (int16_t)(fieldYaw * 100.0f);
+}
+
+static void printNavPose(const char *state)
+{
+    NavPoint target = navPathCount > 0U ? navPoint(navPath[navPathCount - 1U])
+                                        : navPoint(navCurrentNode);
+    serialSendString("NAV POS x=");
+    serialSendUint((uint16_t)(routeX + 0.5f));
+    serialSendString(" y=");
+    serialSendUint((uint16_t)(routeY + 0.5f));
+    serialSendString(" yaw_cdeg=");
+    serialSendInt(navFieldYawCdeg());
+    serialSendString(" state=");
+    serialSendString(state);
+    serialSendString(" target_x=");
+    serialSendUint((uint16_t)target.x);
+    serialSendString(" target_y=");
+    serialSendUint((uint16_t)target.y);
+    serialSendString("\r\n");
+}
+
+static RoutePoint activeRoutePoint(void)
+{
+    if (navRunning) {
+        NavPoint point = navPoint(navPath[routeIndex]);
+        RoutePoint result;
+        result.x = point.x;
+        result.y = point.y;
+        result.event = 0;
+        result.heading = routeIndex + 1U == navPathCount ?
+                         point.arrivalHeading : NAV_HEADING_KEEP;
+        return result;
+    }
+    return routePoint(routeIndex, routeStartZone);
+}
+
+static void finishNavigation(void)
+{
+    NavPoint target = navPoint(navPath[navPathCount - 1U]);
+    stopDriveMotors();
+    routeActive = 0U;
+    routeWaiting = 0U;
+    routeRotating = routeOnlyTurn = routeTurnInBand = 0U;
+    routeForward = routeRight = 0;
+    navRunning = 0U;
+    navCurrentNode = navPath[navPathCount - 1U];
+    routeX = target.x;
+    routeY = target.y;
+    printNavPose("IDLE");
+    serialSendString("NAV DONE x=");
+    serialSendUint((uint16_t)target.x);
+    serialSendString(" y=");
+    serialSendUint((uint16_t)target.y);
+    serialSendString(" yaw_cdeg=");
+    serialSendInt(navFieldYawCdeg());
+    serialSendString("\r\n");
+}
+
 static void serviceRoute(void)
 {
     uint32_t now, dt, age;
@@ -887,14 +1010,28 @@ static void serviceRoute(void)
     error = headingError(routeYaw, yaw);
     if (!imuValid || age > 250U || (!routeRotating && routeAbs(error) > 20.0f) || dt > 150U ||
         now - routeLegStart > 45000U) {
+        uint8_t wasNavigation = navRunning;
         stopAllMotors();
-        serialSendString("ERR ROUTE: IMU/deviation/control delay/leg timeout; aborted\r\n");
+        if (wasNavigation) serialSendString("NAV INVALID reason=route_fault\r\n");
+        serialSendString(wasNavigation ?
+            "ERR NAV: IMU/deviation/control delay/leg timeout; position invalid\r\n" :
+            "ERR ROUTE: IMU/deviation/control delay/leg timeout; aborted\r\n");
         return;
     }
     routeTick = now;
     if (routeRotating) {
+        if (navRunning && now - navLastReport >= 200U) {
+            navLastReport = now;
+            printNavPose("TURN");
+        }
         if (now - routeTurnStart > 18000U) {
-            stopAllMotors(); serialSendString("ERR TURN: timeout; aborted\r\n"); return;
+            uint8_t wasNavigation = navRunning;
+            stopAllMotors();
+            if (wasNavigation) serialSendString("NAV INVALID reason=turn_timeout\r\n");
+            serialSendString(wasNavigation ?
+                "ERR NAV: turn timeout; position invalid\r\n" :
+                "ERR TURN: timeout; aborted\r\n");
+            return;
         }
         if (routeAbs(error) <= 2.0f) {
             sendRouteSpeeds(0, 0, 0);
@@ -916,8 +1053,12 @@ static void serviceRoute(void)
     /* Integration only estimates travel. IMU constrains yaw, not XY drift. */
     routeX += routeEstimate(routeRight, dt, (uint8_t)(routeHeading == 0 || routeHeading == 2));
     routeY += routeEstimate(routeForward, dt, (uint8_t)(routeHeading == 1 || routeHeading == -1));
+    if (navRunning && now - navLastReport >= 200U) {
+        navLastReport = now;
+        printNavPose("RUN");
+    }
     if (!routeAuto && now - routeSettle < 300U) return;
-    p = routePoint(routeIndex, routeStartZone);
+    p = activeRoutePoint();
     dx = p.x - routeX; dy = p.y - routeY;
     if (routeAbs(dx) <= 1.5f && routeAbs(dy) <= 1.5f) {
         sendRouteSpeeds(0, 0, 0);
@@ -930,6 +1071,16 @@ static void serviceRoute(void)
             routeRotating = 1U; routeTurnInBand = 0U;
             routeTurnStart = routeLegStart = clockMs;
             serialSendString("ROUTE turning to station heading\r\n");
+            return;
+        }
+        if (navRunning) {
+            navCurrentNode = navPath[routeIndex];
+            if (routeIndex + 1U == navPathCount) {
+                finishNavigation();
+                return;
+            }
+            ++routeIndex;
+            routeSettle = routeLegStart = clockMs;
             return;
         }
         serialSendString("ROUTE estimated waypoint: ");
@@ -959,6 +1110,98 @@ static void serviceRoute(void)
     sendRouteSpeeds(bodyForward, bodyRight, turn);
 }
 
+static uint8_t processNavCommand(const char *command)
+{
+    NavPoint startPoint;
+    uint16_t x;
+    uint16_t y;
+    uint8_t node;
+
+    if (strcmp(command, "nav status") == 0) {
+        if (!navInitialized) serialSendString("NAV INVALID\r\n");
+        else printNavPose(navRunning ? (routeRotating ? "TURN" : "RUN") : "IDLE");
+        return 1U;
+    }
+    if (strcmp(command, "nav init 1") == 0 || strcmp(command, "nav init 2") == 0) {
+        if (motionMode || routeActive) {
+            serialSendString("ERR NAV: init requires idle; stop first\r\n");
+            return 1U;
+        }
+        if (!imuValid || clockMs - imuStamp > 250U || motionInterrupted()) {
+            serialSendString("ERR NAV: fresh IMU and healthy CAN required\r\n");
+            return 1U;
+        }
+        node = navStartNode((uint8_t)(command[9] - '0'));
+        startPoint = navPoint(node);
+        armed = 0U;
+        navInitialized = 1U;
+        navRunning = 0U;
+        navCurrentNode = node;
+        navPathCount = 0U;
+        routeX = startPoint.x;
+        routeY = startPoint.y;
+        routeHeading = routeNextHeading = NAV_HEADING_UP;
+        routeBaseYaw = routeYaw = imuYaw;
+        serialSendString("NAV INIT x=");
+        serialSendUint((uint16_t)startPoint.x);
+        serialSendString(" y=");
+        serialSendUint((uint16_t)startPoint.y);
+        serialSendString(" yaw_cdeg=9000\r\n");
+        return 1U;
+    }
+    if (strncmp(command, "nav goto ", 9U) != 0) return 0U;
+    if (!parsePair(command + 9, &x, &y)) {
+        serialSendString("ERR NAV: use nav goto X Y\r\n");
+        return 1U;
+    }
+    node = navNodeAt((int16_t)x, (int16_t)y);
+    if (node == NAV_INVALID_NODE) {
+        serialSendString("ERR NAV: target is not a safe waypoint\r\n");
+        return 1U;
+    }
+    if (!navInitialized) {
+        serialSendString("ERR NAV: select nav init 1|2 first\r\n");
+        return 1U;
+    }
+    if (motionMode || routeActive) {
+        serialSendString("ERR NAV: busy; stop first\r\n");
+        return 1U;
+    }
+    if (!armed) {
+        serialSendString("ERR: send 'arm' first\r\n");
+        return 1U;
+    }
+    armed = 0U;
+    if (!imuValid || clockMs - imuStamp > 250U ||
+        routeAbs(headingError(routeYaw, imuYaw)) > 20.0f || motionInterrupted()) {
+        invalidateNavigation("imu_or_heading_fault");
+        serialSendString("ERR NAV: fresh IMU/original heading required; position invalid\r\n");
+        return 1U;
+    }
+    navPathCount = navShortestPath(navCurrentNode, node, navPath, NAV_NODE_COUNT);
+    if (navPathCount == 0U) {
+        invalidateNavigation("no_safe_path");
+        serialSendString("ERR NAV: no safe path; position invalid\r\n");
+        return 1U;
+    }
+    navRunning = 1U;
+    routeActive = routeAuto = 1U;
+    routeWaiting = routeStep = 0U;
+    routeRotating = routeOnlyTurn = routeTurnInBand = 0U;
+    routeIndex = 0U;
+    routeForward = routeRight = 0;
+    setAllMotorsEnabled(true);
+    if (motionInterrupted()) {
+        stopAllMotors();
+        serialSendString("ERR NAV: CAN failure; position invalid\r\n");
+        return 1U;
+    }
+    routeTick = routeSettle = routeLegStart = clockMs;
+    navLastReport = clockMs - 200U;
+    printNavPose("RUN");
+    return 1U;
+}
+
 static uint8_t processRouteCommand(const char *command)
 {
     uint8_t start, step, autoRun;
@@ -975,7 +1218,7 @@ static uint8_t processRouteCommand(const char *command)
         if (motionMode || routeActive || !armed || !imuValid || clockMs - imuStamp > 250U || motionInterrupted()) {
             serialSendString("ERR: turn requires idle, arm, fresh IMU and healthy CAN\r\n"); return 1U;
         }
-        armed = 0U;
+    armed = 0U;
         routeYaw = imuYaw + (command[5] == 'L' ? degrees : -(float)degrees) * yawSign;
         setAllMotorsEnabled(true);
         if (motionInterrupted()) { stopAllMotors(); return 1U; }
@@ -1006,6 +1249,7 @@ static uint8_t processRouteCommand(const char *command)
     if (!imuValid || clockMs - imuStamp > 250U || motionInterrupted()) {
         serialSendString("ERR: fresh IMU and healthy CAN required\r\n"); return 1U;
     }
+    invalidateNavigation("manual_motion");
     step = (uint8_t)(strncmp(command, "route step ", 11U) == 0);
     autoRun = (uint8_t)(strncmp(command, "route auto ", 11U) == 0);
     start = (uint8_t)(command[strlen(command) - 1U] - '0');
@@ -1027,6 +1271,12 @@ static void processCommand(const char *command)
 {
     uint16_t id, value;
     if (emergencyStop) return;
+    if (strcmp(command, "hb") == 0) {
+        hostHeartbeatActive = 1U;
+        hostHeartbeatStamp = clockMs;
+        return;
+    }
+    if (processNavCommand(command)) return;
     if (processRouteCommand(command)) return;
     if (routeActive && strcmp(command, "stop") != 0 && strcmp(command, "X") != 0 &&
         strcmp(command, "x") != 0 && strcmp(command, "disable") != 0 &&
@@ -1056,11 +1306,13 @@ static void processCommand(const char *command)
         return;
     }
     if (strcmp(command, "imu 9600") == 0 || strcmp(command, "imu 115200") == 0) {
+        invalidateNavigation("imu_reconfigured");
         imuInit(strcmp(command, "imu 9600") == 0 ? 9600U : 115200U);
         serialSendString("IMU receiver configured; sensor settings unchanged\r\n");
         return;
     }
     if (strcmp(command, "yawdir 0") == 0 || strcmp(command, "yawdir 1") == 0) {
+        invalidateNavigation("yaw_direction_changed");
         yawSign = command[7] == '0' ? 1 : -1;
         printStatus();
         return;
@@ -1078,6 +1330,7 @@ static void processCommand(const char *command)
         if (wheel) {
             if (!armed) { serialSendString("ERR: send 'arm' first\r\n"); return; }
             armed = 0U;
+            invalidateNavigation("manual_motion");
             Emm_V5_Pos_Control((uint8_t)id, (uint8_t)value, MOTOR_TEST_SPEED,
                               MOTOR_TEST_ACCEL, MOTOR_TEST_PULSES, false, false);
             motionMode = 1U;
@@ -1140,8 +1393,10 @@ static void processCommand(const char *command)
         startJog(DIRECTION_RIGHT, "right");
     } else if (strcmp(command, "X") == 0 || strcmp(command, "x") == 0 ||
                strcmp(command, "stop") == 0) {
+        uint8_t hadNavigation = navInitialized;
         stopServoMotion();
         stopAllMotors();
+        if (hadNavigation) serialSendString("NAV INVALID reason=stopped\r\n");
         serialSendString("STOPPED and disarmed\r\n");
     } else if (strcmp(command, "help") == 0 || strcmp(command, "?") == 0) {
         printHelp();
@@ -1201,11 +1456,14 @@ int main(void)
 
     for (;;) {
         if (jogCanFault) {
+            uint8_t hadNavigation = navInitialized;
             stopAllMotors();
             jogCanFault = 0U;
+            if (hadNavigation) serialSendString("NAV INVALID reason=can_fault\r\n");
             serialSendString("ERR: CAN transmit failed; stop attempted, check power/bus\r\n");
         }
         if (emergencyStop) {
+            uint8_t hadNavigation = navInitialized;
             stopServoMotion();
             stopAllMotors();
             __disable_irq();
@@ -1213,6 +1471,7 @@ int main(void)
             rxLength = 0U;
             rxReady = 0U;
             __enable_irq();
+            if (hadNavigation) serialSendString("NAV INVALID reason=emergency_stop\r\n");
             serialSendString("EMERGENCY STOP; motors 1..5 stopped; disarmed\r\n");
         }
 
@@ -1224,6 +1483,7 @@ int main(void)
             __enable_irq();
             processCommand(command);
         }
+        serviceHostWatchdog();
         serviceMotion();
         serviceRoute();
         reportCompletedServoMoves();
