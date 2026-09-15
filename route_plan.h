@@ -1,6 +1,7 @@
 #ifndef ROUTE_PLAN_H
 #define ROUTE_PLAN_H
 #include <stdint.h>
+#include <math.h>
 
 /* Map coordinates in mm: origin bottom left, +X right, +Y up.
  * Headings: 0 up, 1 left, 2 down, -1 right, 4 keep previous heading.
@@ -9,7 +10,10 @@
 #define ROUTE_FORWARD_SCALE 1.0f
 #define ROUTE_LATERAL_SCALE 1.0f
 #define ROUTE_MM_PER_REV    314.159265f /* pi * 100 mm, direct drive G=1 */
-#define ROUTE_RPM           20
+#define ROUTE_RPM           60
+#define ROUTE_ACCEL_RPM_S   120.0f
+#define ROUTE_TURN_RPM      30.0f
+#define ROUTE_TURN_ACCEL    90.0f
 #define ROUTE_COUNT         16U
 typedef struct { int16_t x, y; const char *event; int8_t heading; } RoutePoint;
 static const RoutePoint routeTemplate[ROUTE_COUNT] = {
@@ -40,11 +44,9 @@ static void routeBody(int16_t mapUp, int16_t mapRight, int8_t heading,
 }
 static int16_t routeTurnSpeed(float error, int8_t sign)
 {
-    float speed = error * 0.5f;
-    if (speed > 10.0f) speed = 10.0f;
-    if (speed < -10.0f) speed = -10.0f;
-    if (speed > 0 && speed < 2) speed = 2;
-    if (speed < 0 && speed > -2) speed = -2;
+    float speed = error * 1.2f;
+    if (speed > ROUTE_TURN_RPM) speed = ROUTE_TURN_RPM;
+    if (speed < -ROUTE_TURN_RPM) speed = -ROUTE_TURN_RPM;
     return (int16_t)(speed * sign);
 }
 /* Positive lateral means right. IDs: FR=1 FL=2 RL=3 RR=4.
@@ -61,14 +63,27 @@ static float routeEstimate(int16_t rpm, uint32_t dt, uint8_t lateral)
     return rpm * (ROUTE_MM_PER_REV / 60000.0f) * dt *
            (lateral ? ROUTE_LATERAL_SCALE : ROUTE_FORWARD_SCALE);
 }
-/* Low speed at both ends. Hardware commands are integer RPM. */
+/* Slew in physical time; fractional state avoids low-speed quantization stalls. */
+static float routeSlew(float current, float target, float rate, uint32_t dt)
+{
+    float step = rate * dt / 1000.0f;
+    if (target > current + step) return current + step;
+    if (target < current - step) return current - step;
+    return target;
+}
+static int16_t routeRound(float value)
+{
+    return (int16_t)(value >= 0 ? value + 0.5f : value - 0.5f);
+}
+/* Cubic smooth-start + constant-deceleration braking envelope.
+ * Unlike linear remaining-distance P control, this avoids a long crawl tail. */
 static int16_t routeSpeed(float remaining, uint32_t elapsed)
 {
-    int16_t speed = ROUTE_RPM;
-    int16_t ramp = (int16_t)(elapsed < 600U ? elapsed * ROUTE_RPM / 600U : ROUTE_RPM);
-    if (remaining < 60.0f) speed = (int16_t)(remaining * ROUTE_RPM / 60.0f);
-    if (speed > ramp) speed = ramp;
-    if (speed < 3) speed = 3;
-    return speed;
+    float t = elapsed < 700U ? elapsed / 700.0f : 1.0f;
+    float speed = ROUTE_RPM * t * t * (3.0f - 2.0f * t);
+    float brake = sqrtf(2.0f * ROUTE_ACCEL_RPM_S * (remaining > 0 ? remaining : 0) /
+                        (ROUTE_MM_PER_REV / 60.0f));
+    if (speed > brake) speed = brake;
+    return routeRound(speed);
 }
 #endif
