@@ -68,6 +68,10 @@ int main(void)
     assert(mechanismStateStart(&state, &fast, 100U));
     assert(state.running && mechanismStateService(&state, 299U) == MECHANISM_EVENT_NONE);
     assert(mechanismStateService(&state, 300U) == MECHANISM_EVENT_POSITION);
+    assert(state.current.horizontalDmm > pose.horizontalDmm &&
+           state.current.horizontalDmm < fast.horizontalDmm);
+    assert(state.current.liftDmm > pose.liftDmm &&
+           state.current.liftDmm < fast.liftDmm);
     assert(mechanismStateService(&state, state.deadlineMs) == MECHANISM_EVENT_DONE);
     assert(!state.running && state.current.horizontalDmm == 650);
     mechanismStateInvalidate(&state);

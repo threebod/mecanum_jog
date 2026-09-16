@@ -72,8 +72,11 @@ typedef enum {
 typedef struct {
     uint8_t valid;
     uint8_t running;
+    MechanismPose start;
     MechanismPose current;
     MechanismPose target;
+    uint32_t startMs;
+    uint32_t durationMs;
     uint32_t deadlineMs;
     uint32_t lastReportMs;
 } MechanismState;
@@ -273,9 +276,12 @@ static uint8_t mechanismStateStart(MechanismState *state,
 {
     if (!state->valid || state->running || !mechanismPoseValid(target)) return 0U;
     state->target = *target;
+    state->start = state->current;
     state->running = 1U;
+    state->startMs = nowMs;
     state->lastReportMs = nowMs;
-    state->deadlineMs = nowMs + mechanismMoveDurationMs(&state->current, target);
+    state->durationMs = mechanismMoveDurationMs(&state->current, target);
+    state->deadlineMs = nowMs + state->durationMs;
     return 1U;
 }
 
@@ -288,6 +294,19 @@ static uint8_t mechanismStateService(MechanismState *state, uint32_t nowMs)
         return MECHANISM_EVENT_DONE;
     }
     if (nowMs - state->lastReportMs >= 200U) {
+        uint32_t elapsed = nowMs - state->startMs;
+        int32_t horizontalDelta = (int32_t)state->target.horizontalDmm -
+                                  state->start.horizontalDmm;
+        int32_t liftDelta = (int32_t)state->target.liftDmm -
+                            state->start.liftDmm;
+        int32_t turretDelta = (int32_t)state->target.turretDdeg -
+                              state->start.turretDdeg;
+        state->current.horizontalDmm = (int16_t)(state->start.horizontalDmm +
+            horizontalDelta * (int32_t)elapsed / (int32_t)state->durationMs);
+        state->current.liftDmm = (uint16_t)(state->start.liftDmm +
+            liftDelta * (int32_t)elapsed / (int32_t)state->durationMs);
+        state->current.turretDdeg = (uint16_t)(state->start.turretDdeg +
+            turretDelta * (int32_t)elapsed / (int32_t)state->durationMs);
         state->lastReportMs = nowMs;
         return MECHANISM_EVENT_POSITION;
     }

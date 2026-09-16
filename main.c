@@ -866,7 +866,8 @@ static uint8_t processMechanismCommand(const char *commandText)
         }
         return 1U;
     }
-    if (motionMode || routeActive || mechanismState.running) {
+    if (motionMode || routeActive || mechanismState.running ||
+        mechanismActionActive) {
         serialSendString("ERR MECH: busy; stop first\r\n");
         return 1U;
     }
@@ -901,7 +902,7 @@ static void serviceMechanism(void)
 {
     uint8_t event = mechanismStateService(&mechanismState, clockMs);
     if (event == MECHANISM_EVENT_POSITION) {
-        printMechanismPose("MECH POS", &mechanismState.target);
+        printMechanismPose("MECH POS", &mechanismState.current);
     } else if (event == MECHANISM_EVENT_DONE) {
         stopAuxMotors();
         printMechanismPose("MECH DONE", &mechanismState.current);
@@ -1648,7 +1649,7 @@ static void processCommand(const char *command)
             serialSendString("ERR: motor 5|6 0|1\r\n");
             return;
         }
-        mechanismStateInvalidate(&mechanismState);
+        invalidateMechanism("manual_jog");
         startAuxMotorJog((uint8_t)id, (uint8_t)value);
         return;
     }

@@ -65,7 +65,7 @@ $requiredMainPatterns = @(
     '(?s)void mechanismActionService\(void\).*?MECHANISM_ACTION_POSE.*?MECHANISM_ACTION_GRIPPER.*?MECHANISM_ACTION_PLATFORM.*?MECHANISM_ACTION_SERVO.*?MECHANISM_ACTION_WAIT',
     '(?s)for \(;;\).*?serviceMechanism\(\);',
     '(?s)for \(;;\).*?mechanismActionService\(\);',
-    '(?s)strncmp\(command, "motor ", 6U\) == 0.*?mechanismStateInvalidate',
+    '(?s)strncmp\(command, "motor ", 6U\) == 0.*?invalidateMechanism\("manual_jog"\)',
     '(?s)static uint8_t processNavCommand\(const char \*command\).*?nav init 1.*?nav init 2.*?nav goto .*?navShortestPath',
     'Emm_V5_Synchronous_motion\(0x00\)',
     '(?s)static CommandResult parseServoCommand\(const char \*line,.*?channel < 2U \|\| channel > 4U.*?channel < 4U && angle > 270U.*?channel == 4U && angle > 360U',
