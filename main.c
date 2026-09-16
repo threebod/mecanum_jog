@@ -7,9 +7,10 @@
 #include "straight_control.h"
 #include "route_plan.h"
 #include "map_navigation.h"
+#include "mechanism_action.h"
 
 #define COMMAND_BAUD_RATE  115200U
-#define RX_LINE_SIZE       24U
+#define RX_LINE_SIZE       80U
 
 #define MOTOR_MIN_ID       1U
 #define MOTOR_MAX_ID       4U
@@ -66,6 +67,9 @@ static volatile uint8_t servoChannelMoving[3];
 static volatile uint8_t completedServoChannels;
 static volatile uint32_t currentAngleMdeg[3];
 static volatile uint32_t targetAngleMdeg[3];
+static volatile uint32_t servoStepMdeg[3] = {
+    SERVO_STEP_MDEG, SERVO_STEP_MDEG, SERVO_STEP_MDEG
+};
 extern volatile uint8_t jogCanFault;
 static volatile uint32_t clockMs;
 static uint8_t hostHeartbeatActive;
@@ -103,6 +107,22 @@ static uint8_t routeSentValid;
 static uint8_t straightLateral;
 static float straightSpeedState, straightTurnState;
 static void sendRouteSpeeds(int16_t forward, int16_t right, int16_t turn);
+static void serialSendString(const char *text);
+static MechanismState mechanismState;
+static const MechanismInitialState *mechanismActionInitial;
+static const MechanismAction *mechanismActions;
+static uint16_t mechanismActionCount, mechanismActionIndex;
+static uint8_t mechanismActionActive, mechanismActionDispatched;
+static uint32_t mechanismActionWaitUntil;
+
+static void invalidateMechanism(const char *reason)
+{
+    if (!mechanismState.valid && !mechanismState.running) return;
+    mechanismStateInvalidate(&mechanismState);
+    serialSendString("MECH INVALID reason=");
+    serialSendString(reason);
+    serialSendString("\r\n");
+}
 
 static void serialSendChar(char value)
 {
@@ -240,7 +260,8 @@ static void stopAuxMotors(void)
 
 static void stopAllMotors(void)
 {
-
+    invalidateMechanism("stopped");
+    mechanismActionActive = 0U;
     motionMode = 0U;
     routeActive = 0U;
     routeWaiting = 0U;
@@ -307,6 +328,9 @@ static void printHelp(void)
     serialSendString("  nav init 1|2       set estimated start pose; fresh IMU, idle\r\n");
     serialSendString("  nav goto X Y [rpm] move to safe waypoint; rpm 10..120 (arm)\r\n");
     serialSendString("  nav status         estimated navigation state\r\n");
+    serialSendString("  mech init H L T     set manual mechanism pose (0.1mm/0.1deg)\r\n");
+    serialSendString("  mech pose H L T HR HA LR LA TS  move estimated pose (arm)\r\n");
+    serialSendString("  mech status         estimated mechanism state\r\n");
     serialSendString("  Route is a clear-floor test; no obstacle/QR/grasp detection.\r\n");
 }
 
@@ -465,16 +489,19 @@ static void servoSetPulse(uint8_t channel, uint16_t pulse)
     }
 }
 
-static uint8_t servoSetTarget(uint8_t channel, uint16_t angle)
+static uint8_t servoSetTargetMdeg(uint8_t channel, uint32_t target,
+                                  uint16_t speedDps10)
 {
     uint8_t index = (uint8_t)(channel - 2U);
-    uint32_t target = (uint32_t)angle * 1000U;
+    uint32_t step = (uint32_t)speedDps10 * 100U / SERVO_UPDATE_HZ;
+    if (step == 0U) step = 1U;
 
     if (!servoChannelEnabled[index]) {
         servoSetPulse(channel, servoAngleToPulse(channel, target));
         __disable_irq();
         currentAngleMdeg[index] = target;
         targetAngleMdeg[index] = target;
+        servoStepMdeg[index] = step;
         servoChannelMoving[index] = 0U;
         __enable_irq();
         return 0U;
@@ -482,10 +509,17 @@ static uint8_t servoSetTarget(uint8_t channel, uint16_t angle)
 
     __disable_irq();
     targetAngleMdeg[index] = target;
+    servoStepMdeg[index] = step;
     servoChannelMoving[index] = currentAngleMdeg[index] != target;
     completedServoChannels &= (uint8_t)~(1U << index);
     __enable_irq();
     return servoChannelMoving[index];
+}
+
+static uint8_t servoSetTarget(uint8_t channel, uint16_t angle)
+{
+    return servoSetTargetMdeg(channel, (uint32_t)angle * 1000U,
+                              SERVO_SPEED_DPS * 10U);
 }
 
 static void stopServoMotion(void)
@@ -593,11 +627,11 @@ void TIM2_IRQHandler(void)
         current = currentAngleMdeg[index];
         target = targetAngleMdeg[index];
         if (current < target) {
-            current = target - current <= SERVO_STEP_MDEG ?
-                      target : current + SERVO_STEP_MDEG;
+            current = target - current <= servoStepMdeg[index] ?
+                      target : current + servoStepMdeg[index];
         } else {
-            current = current - target <= SERVO_STEP_MDEG ?
-                      target : current - SERVO_STEP_MDEG;
+            current = current - target <= servoStepMdeg[index] ?
+                      target : current - servoStepMdeg[index];
         }
         currentAngleMdeg[index] = current;
         servoSetPulse((uint8_t)(index + 2U),
@@ -767,6 +801,196 @@ static uint8_t parseValueWithOptionalRpm(const char *cursor, uint16_t *value,
     if (*cursor != ' ') return 0U;
     ++cursor;
     return parseUint(&cursor, rpm) && *cursor == '\0';
+}
+
+static void printMechanismPose(const char *prefix, const MechanismPose *pose)
+{
+    serialSendString(prefix);
+    serialSendString(" h=");
+    serialSendInt(pose->horizontalDmm);
+    serialSendString(" l=");
+    serialSendUint(pose->liftDmm);
+    serialSendString(" t=");
+    serialSendUint(pose->turretDdeg);
+    serialSendString("\r\n");
+}
+
+static void startMechanismPose(const MechanismPose *target)
+{
+    int16_t horizontalDelta = (int16_t)(target->horizontalDmm -
+                                        mechanismState.current.horizontalDmm);
+    int16_t liftDelta = (int16_t)((int32_t)target->liftDmm -
+                                  (int32_t)mechanismState.current.liftDmm);
+    uint32_t horizontalPulses = mechanismHorizontalPulses(horizontalDelta);
+    uint32_t liftPulses = mechanismLiftPulses(liftDelta);
+
+    if (!mechanismStateStart(&mechanismState, target, clockMs)) {
+        serialSendString("ERR MECH: invalid or busy pose\r\n");
+        return;
+    }
+    setAuxMotorsEnabled(true);
+    if (motionInterrupted()) { stopAllMotors(); return; }
+    if (horizontalPulses != 0U) {
+        Emm_V5_Pos_Control(6U, horizontalDelta > 0 ? 0U : 1U,
+                           target->horizontalRpm, target->horizontalAccel,
+                           horizontalPulses, false, true);
+    }
+    if (motionInterrupted()) { stopAllMotors(); return; }
+    if (liftPulses != 0U) {
+        Emm_V5_Pos_Control(5U, liftDelta > 0 ? 0U : 1U,
+                           target->liftRpm, target->liftAccel,
+                           liftPulses, false, true);
+    }
+    servoSetTargetMdeg(4U, (uint32_t)target->turretDdeg * 100U,
+                       target->turretDps10);
+    if (motionInterrupted()) { stopAllMotors(); return; }
+    Emm_V5_Synchronous_motion(0x00);
+    printMechanismPose("MECH RUN", target);
+}
+
+static uint8_t processMechanismCommand(const char *commandText)
+{
+    MechanismCommand command;
+    if (strncmp(commandText, "mech ", 5U) != 0) return 0U;
+    if (!mechanismParseCommand(commandText, &command)) {
+        serialSendString("ERR MECH: use init H L T, pose H L T HR HA LR LA TS, or status\r\n");
+        return 1U;
+    }
+    if (command.type == MECHANISM_COMMAND_STATUS) {
+        if (!mechanismState.valid) {
+            serialSendString("MECH INVALID reason=not_initialized\r\n");
+        } else {
+            printMechanismPose(mechanismState.running ? "MECH RUN" : "MECH POS",
+                               mechanismState.running ? &mechanismState.target :
+                                                        &mechanismState.current);
+        }
+        return 1U;
+    }
+    if (motionMode || routeActive || mechanismState.running) {
+        serialSendString("ERR MECH: busy; stop first\r\n");
+        return 1U;
+    }
+    if (command.type == MECHANISM_COMMAND_INIT) {
+        mechanismStateInitialize(&mechanismState, &command.pose);
+        servoSetPulse(4U, servoAngleToPulse(
+            4U, (uint32_t)command.pose.turretDdeg * 100U));
+        currentAngleMdeg[2] = (uint32_t)command.pose.turretDdeg * 100U;
+        targetAngleMdeg[2] = currentAngleMdeg[2];
+        servoChannelMoving[2] = 0U;
+        printMechanismPose("MECH INIT", &command.pose);
+        return 1U;
+    }
+    if (command.type != MECHANISM_COMMAND_POSE) {
+        serialSendString("ERR MECH: unsupported command\r\n");
+        return 1U;
+    }
+    if (!mechanismState.valid) {
+        serialSendString("ERR MECH: initialize current pose first\r\n");
+        return 1U;
+    }
+    if (!armed) {
+        serialSendString("ERR: send 'arm' first\r\n");
+        return 1U;
+    }
+    armed = 0U;
+    startMechanismPose(&command.pose);
+    return 1U;
+}
+
+static void serviceMechanism(void)
+{
+    uint8_t event = mechanismStateService(&mechanismState, clockMs);
+    if (event == MECHANISM_EVENT_POSITION) {
+        printMechanismPose("MECH POS", &mechanismState.target);
+    } else if (event == MECHANISM_EVENT_DONE) {
+        stopAuxMotors();
+        printMechanismPose("MECH DONE", &mechanismState.current);
+    }
+}
+
+uint8_t mechanismActionStart(const MechanismInitialState *initial,
+                             const MechanismAction *actions,
+                             uint16_t count)
+{
+    if (initial == (const MechanismInitialState *)0 ||
+        actions == (const MechanismAction *)0 || count == 0U ||
+        mechanismActionActive || !mechanismState.valid ||
+        mechanismState.running || motionMode || routeActive) return 0U;
+    mechanismActionInitial = initial;
+    mechanismActions = actions;
+    mechanismActionCount = count;
+    mechanismActionIndex = 0U;
+    mechanismActionDispatched = 0U;
+    mechanismActionActive = 1U;
+    mechanismActionWaitUntil = clockMs;
+    return 1U;
+}
+
+static void mechanismActionCompleteStep(uint16_t waitMs)
+{
+    if (waitMs != 0U) {
+        mechanismActionWaitUntil = clockMs + waitMs;
+        return;
+    }
+    ++mechanismActionIndex;
+    mechanismActionDispatched = 0U;
+}
+
+void mechanismActionService(void)
+{
+    const MechanismAction *action;
+    uint16_t angle;
+    if (!mechanismActionActive) return;
+    if (mechanismActionDispatched && mechanismActionWaitUntil != 0U) {
+        if ((int32_t)(clockMs - mechanismActionWaitUntil) < 0) return;
+        mechanismActionWaitUntil = 0U;
+        ++mechanismActionIndex;
+        mechanismActionDispatched = 0U;
+    }
+    if (mechanismActionIndex >= mechanismActionCount) {
+        mechanismActionActive = 0U;
+        return;
+    }
+    action = &mechanismActions[mechanismActionIndex];
+    if (!mechanismActionDispatched) {
+        if (action->type == MECHANISM_ACTION_POSE) {
+            startMechanismPose(&action->pose);
+        } else if (action->type == MECHANISM_ACTION_GRIPPER) {
+            angle = action->value ? mechanismActionInitial->gripperOpenDeg :
+                                    mechanismActionInitial->gripperCloseDeg;
+            servoSetTarget(2U, angle);
+        } else if (action->type == MECHANISM_ACTION_PLATFORM) {
+            if (action->value < 1U || action->value > 3U) {
+                mechanismActionActive = 0U;
+                return;
+            }
+            servoSetTarget(3U,
+                mechanismActionInitial->platformDeg[action->value - 1U]);
+        } else if (action->type == MECHANISM_ACTION_SERVO) {
+            if (action->channel < 2U || action->channel > 4U ||
+                (action->channel < 4U && action->value > 270U) ||
+                (action->channel == 4U && action->value > 360U)) {
+                mechanismActionActive = 0U;
+                return;
+            }
+            servoSetTarget(action->channel, action->value);
+        } else if (action->type != MECHANISM_ACTION_WAIT) {
+            mechanismActionActive = 0U;
+            return;
+        }
+        mechanismActionDispatched = 1U;
+        if (!mechanismActionActive) return;
+        if (action->type == MECHANISM_ACTION_WAIT) {
+            mechanismActionWaitUntil = clockMs + action->waitMs;
+            return;
+        }
+    }
+    if (action->type == MECHANISM_ACTION_POSE && mechanismState.running) return;
+    if ((action->type == MECHANISM_ACTION_GRIPPER ||
+         action->type == MECHANISM_ACTION_PLATFORM ||
+         action->type == MECHANISM_ACTION_SERVO) &&
+        servoChannelMoving[action->channel - 2U]) return;
+    mechanismActionCompleteStep(action->waitMs);
 }
 
 static void startLine(const char *cursor, uint8_t heading)
@@ -1388,6 +1612,7 @@ static void processCommand(const char *command)
         hostHeartbeatStamp = clockMs;
         return;
     }
+    if (processMechanismCommand(command)) return;
     if (processNavCommand(command)) return;
     if (processRouteCommand(command)) return;
     if (routeActive && strcmp(command, "stop") != 0 && strcmp(command, "X") != 0 &&
@@ -1423,6 +1648,7 @@ static void processCommand(const char *command)
             serialSendString("ERR: motor 5|6 0|1\r\n");
             return;
         }
+        mechanismStateInvalidate(&mechanismState);
         startAuxMotorJog((uint8_t)id, (uint8_t)value);
         return;
     }
@@ -1479,6 +1705,7 @@ static void processCommand(const char *command)
         armed = 0U;
         serialSendString("OK: motors 1..6 disabled and disarmed\r\n");
     } else if (strncmp(command, "servo ", 6U) == 0) {
+        if (command[6] == '4') invalidateMechanism("turret_manual");
         processServoCommand(command);
     } else if (strcmp(command, "W") == 0 || strcmp(command, "w") == 0) {
         startJog(DIRECTION_FORWARD, "forward");
@@ -1547,6 +1774,7 @@ int main(void)
     serialInit();
     imuInit(115200U);
 
+    mechanismStateReset(&mechanismState);
     stopAllMotors();
     serialSendString("\r\nYYB mecanum/servo jog ready; motors 1..6 stopped; disarmed.\r\n");
     printHelp();
@@ -1582,6 +1810,8 @@ int main(void)
         }
         serviceHostWatchdog();
         serviceMotion();
+        serviceMechanism();
+        mechanismActionService();
         serviceRoute();
         reportCompletedServoMoves();
     }

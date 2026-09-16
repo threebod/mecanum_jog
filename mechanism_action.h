@@ -2,6 +2,7 @@
 #define MECANUM_JOG_MECHANISM_ACTION_H
 
 #include <stdint.h>
+#include <string.h>
 
 #define MECHANISM_HORIZONTAL_MIN_DMM (-1220)
 #define MECHANISM_HORIZONTAL_MAX_DMM 650
@@ -49,6 +50,33 @@ typedef struct {
     uint16_t waitMs;
     MechanismPose pose;
 } MechanismAction;
+
+typedef enum {
+    MECHANISM_COMMAND_NONE = 0,
+    MECHANISM_COMMAND_INIT,
+    MECHANISM_COMMAND_POSE,
+    MECHANISM_COMMAND_STATUS
+} MechanismCommandType;
+
+typedef struct {
+    uint8_t type;
+    MechanismPose pose;
+} MechanismCommand;
+
+typedef enum {
+    MECHANISM_EVENT_NONE = 0,
+    MECHANISM_EVENT_POSITION,
+    MECHANISM_EVENT_DONE
+} MechanismEvent;
+
+typedef struct {
+    uint8_t valid;
+    uint8_t running;
+    MechanismPose current;
+    MechanismPose target;
+    uint32_t deadlineMs;
+    uint32_t lastReportMs;
+} MechanismState;
 
 #define MECH_INITIAL_STATE(H, L, T, HR, HA, LR, LA, TS, GRIP, PLATFORM, GO, GC, P1, P2, P3) \
     {{(H), (L), (T), (HR), (HA), (LR), (LA), (TS)}, (GRIP), (PLATFORM), \
@@ -127,5 +155,154 @@ static uint32_t mechanismMoveDurationMs(const MechanismPose *current,
     uint32_t maximum = horizontalMs > liftMs ? horizontalMs : liftMs;
     return maximum > turretMs ? maximum : turretMs;
 }
+
+static uint8_t mechanismParseUnsigned(const char **cursor, uint16_t *value)
+{
+    uint32_t result = 0U;
+    uint8_t digits = 0U;
+    while (**cursor == ' ') ++*cursor;
+    while (**cursor >= '0' && **cursor <= '9') {
+        result = result * 10U + (uint32_t)(**cursor - '0');
+        if (result > 65535U) return 0U;
+        ++*cursor;
+        ++digits;
+    }
+    if (!digits) return 0U;
+    *value = (uint16_t)result;
+    return 1U;
+}
+
+static uint8_t mechanismParseSigned(const char **cursor, int16_t *value)
+{
+    uint8_t negative = 0U;
+    uint16_t magnitude;
+    while (**cursor == ' ') ++*cursor;
+    if (**cursor == '-') {
+        negative = 1U;
+        ++*cursor;
+    }
+    if (!mechanismParseUnsigned(cursor, &magnitude) ||
+        magnitude > (negative ? 32768U : 32767U)) return 0U;
+    *value = negative ? (int16_t)(-(int32_t)magnitude) : (int16_t)magnitude;
+    return 1U;
+}
+
+static uint8_t mechanismAtEnd(const char *cursor)
+{
+    while (*cursor == ' ') ++cursor;
+    return *cursor == '\0';
+}
+
+static uint8_t mechanismParseCommand(const char *text, MechanismCommand *command)
+{
+    const char *cursor;
+    uint16_t lift, turret, horizontalRpm, horizontalAccel;
+    uint16_t liftRpm, liftAccel, turretSpeed;
+    int16_t horizontal;
+    MechanismPose pose;
+    if (text == (const char *)0 || command == (MechanismCommand *)0) return 0U;
+    if (strcmp(text, "mech status") == 0) {
+        command->type = MECHANISM_COMMAND_STATUS;
+        return 1U;
+    }
+    if (strncmp(text, "mech init ", 10U) == 0) {
+        cursor = text + 10U;
+        if (!mechanismParseSigned(&cursor, &horizontal) ||
+            !mechanismParseUnsigned(&cursor, &lift) ||
+            !mechanismParseUnsigned(&cursor, &turret) || !mechanismAtEnd(cursor)) {
+            return 0U;
+        }
+        pose.horizontalDmm = horizontal;
+        pose.liftDmm = lift;
+        pose.turretDdeg = turret;
+        pose.horizontalRpm = 30U;
+        pose.horizontalAccel = 50U;
+        pose.liftRpm = 30U;
+        pose.liftAccel = 50U;
+        pose.turretDps10 = 130U;
+        if (!mechanismPoseValid(&pose)) return 0U;
+        command->type = MECHANISM_COMMAND_INIT;
+        command->pose = pose;
+        return 1U;
+    }
+    if (strncmp(text, "mech pose ", 10U) != 0) return 0U;
+    cursor = text + 10U;
+    if (!mechanismParseSigned(&cursor, &horizontal) ||
+        !mechanismParseUnsigned(&cursor, &lift) ||
+        !mechanismParseUnsigned(&cursor, &turret) ||
+        !mechanismParseUnsigned(&cursor, &horizontalRpm) ||
+        !mechanismParseUnsigned(&cursor, &horizontalAccel) ||
+        !mechanismParseUnsigned(&cursor, &liftRpm) ||
+        !mechanismParseUnsigned(&cursor, &liftAccel) ||
+        !mechanismParseUnsigned(&cursor, &turretSpeed) || !mechanismAtEnd(cursor)) {
+        return 0U;
+    }
+    pose.horizontalDmm = horizontal;
+    pose.liftDmm = lift;
+    pose.turretDdeg = turret;
+    pose.horizontalRpm = horizontalRpm;
+    pose.horizontalAccel = (uint8_t)horizontalAccel;
+    pose.liftRpm = liftRpm;
+    pose.liftAccel = (uint8_t)liftAccel;
+    pose.turretDps10 = turretSpeed;
+    if (horizontalAccel > 255U || liftAccel > 255U || !mechanismPoseValid(&pose)) {
+        return 0U;
+    }
+    command->type = MECHANISM_COMMAND_POSE;
+    command->pose = pose;
+    return 1U;
+}
+
+static void mechanismStateReset(MechanismState *state)
+{
+    memset(state, 0, sizeof(*state));
+}
+
+static void mechanismStateInitialize(MechanismState *state,
+                                     const MechanismPose *pose)
+{
+    state->valid = 1U;
+    state->running = 0U;
+    state->current = *pose;
+    state->target = *pose;
+}
+
+static uint8_t mechanismStateStart(MechanismState *state,
+                                   const MechanismPose *target,
+                                   uint32_t nowMs)
+{
+    if (!state->valid || state->running || !mechanismPoseValid(target)) return 0U;
+    state->target = *target;
+    state->running = 1U;
+    state->lastReportMs = nowMs;
+    state->deadlineMs = nowMs + mechanismMoveDurationMs(&state->current, target);
+    return 1U;
+}
+
+static uint8_t mechanismStateService(MechanismState *state, uint32_t nowMs)
+{
+    if (!state->running) return MECHANISM_EVENT_NONE;
+    if ((int32_t)(nowMs - state->deadlineMs) >= 0) {
+        state->current = state->target;
+        state->running = 0U;
+        return MECHANISM_EVENT_DONE;
+    }
+    if (nowMs - state->lastReportMs >= 200U) {
+        state->lastReportMs = nowMs;
+        return MECHANISM_EVENT_POSITION;
+    }
+    return MECHANISM_EVENT_NONE;
+}
+
+static void mechanismStateInvalidate(MechanismState *state)
+{
+    state->valid = 0U;
+    state->running = 0U;
+}
+
+uint8_t mechanismActionStart(const MechanismInitialState *initial,
+                             const MechanismAction *actions,
+                             uint16_t count);
+void mechanismActionService(void);
 
 #endif
