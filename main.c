@@ -102,6 +102,7 @@ static uint8_t navPath[NAV_NODE_COUNT], navPathCount;
 static uint32_t navLastReport;
 static float routeDriveRpm, routeTurnRpm, routeCorrection;
 static uint16_t routeRpm = ROUTE_RPM;
+static float routeLateralScale = ROUTE_LATERAL_SCALE;
 static int16_t routeSent[4];
 static uint8_t routeSentValid;
 static uint8_t straightLateral;
@@ -323,6 +324,7 @@ static void printHelp(void)
     serialSendString("  route step 1|2 [rpm]   pause at EVERY waypoint (arm)\r\n");
     serialSendString("  route next       continue from a stopped checkpoint\r\n");
     serialSendString("  route status     estimated position / checkpoint\r\n");
+    serialSendString("  route scale 5000..15000  lateral 50.00%..150.00%, RAM only\r\n");
     serialSendString("  route auto 1|2 [rpm]   full route; rpm 10..120 (arm)\r\n");
     serialSendString("  turn L|R 1..180  relative IMU turn in clear space (arm)\r\n");
     serialSendString("  nav init 1|2       set estimated start pose; fresh IMU, idle\r\n");
@@ -1202,6 +1204,8 @@ static void printRouteStatus(void)
     serialSendString("point="); serialSendUint((uint16_t)(routeIndex + 1U));
     serialSendString(" estimated_x_mm="); serialSendUint((uint16_t)(routeX < 0 ? 0 : routeX));
     serialSendString(" estimated_y_mm="); serialSendUint((uint16_t)(routeY < 0 ? 0 : routeY));
+    serialSendString(" lateral_scale_bp=");
+    serialSendUint((uint16_t)(routeLateralScale * 10000.0f + 0.5f));
     serialSendString(" (command estimate, NOT localization)\r\n");
 }
 
@@ -1356,8 +1360,12 @@ static void serviceRoute(void)
         return;
     }
     /* Integration only estimates travel. IMU constrains yaw, not XY drift. */
-    routeX += routeEstimate(routeRight, dt, (uint8_t)(routeHeading == 0 || routeHeading == 2));
-    routeY += routeEstimate(routeForward, dt, (uint8_t)(routeHeading == 1 || routeHeading == -1));
+    routeX += routeEstimateScaled(routeRight, dt,
+        (routeHeading == 0 || routeHeading == 2) ?
+        routeLateralScale : ROUTE_FORWARD_SCALE);
+    routeY += routeEstimateScaled(routeForward, dt,
+        (routeHeading == 1 || routeHeading == -1) ?
+        routeLateralScale : ROUTE_FORWARD_SCALE);
     if (navRunning && now - navLastReport >= 200U) {
         navLastReport = now;
         printNavPose("RUN");
@@ -1530,6 +1538,23 @@ static uint8_t processRouteCommand(const char *command)
     uint16_t degrees, rpm;
     const char *cursor;
     if (strcmp(command, "route status") == 0) { printRouteStatus(); return 1U; }
+    if (strncmp(command, "route scale ", 12U) == 0) {
+        cursor = command + 12U;
+        if (!parseUint(&cursor, &degrees) || *cursor != '\0' ||
+            degrees < 5000U || degrees > 15000U) {
+            serialSendString("ERR ROUTE: scale must be 5000..15000 (50.00%..150.00%)\r\n");
+            return 1U;
+        }
+        if (motionMode || routeActive) {
+            serialSendString("ERR ROUTE: scale requires idle; stop first\r\n");
+            return 1U;
+        }
+        routeLateralScale = degrees / 10000.0f;
+        serialSendString("OK route lateral_scale_bp=");
+        serialSendUint(degrees);
+        serialSendString(" RAM_only\r\n");
+        return 1U;
+    }
     if (strncmp(command, "turn ", 5U) == 0) {
         cursor = command + 7;
         if (strlen(command) < 8U || (command[5] != 'L' && command[5] != 'R') ||

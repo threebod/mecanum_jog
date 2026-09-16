@@ -27,6 +27,7 @@ static int8_t routeHeading,routeNextHeading,yawSign=1;
 static float routeX,routeY,routeYaw,routeBaseYaw,imuYaw;
 static float routeDriveRpm,routeTurnRpm,routeCorrection;
 static uint16_t routeRpm=ROUTE_RPM;
+static float routeLateralScale=ROUTE_LATERAL_SCALE;
 static uint8_t routeSentValid;
 static int16_t routeSent[4], staged[4];
 static const uint8_t motorDirections[1][5]={{1,1,0,0,1}};
@@ -95,6 +96,12 @@ int main(void) {
     unsigned n,start,target; int sign;
     int16_t previous,peak;
     char cmd[32];
+    assert(processRouteCommand("route scale 9250") &&
+           routeAbs(routeLateralScale-0.925f)<0.0001f);
+    routeActive=1;assert(processRouteCommand("route scale 8000") &&
+                         routeAbs(routeLateralScale-0.925f)<0.0001f);
+    routeActive=0;assert(processRouteCommand("route scale 4999") &&
+                         routeAbs(routeLateralScale-0.925f)<0.0001f);
     sendRouteSpeeds(20,0,0);assert(batches==1 && writes==4);
     sendRouteSpeeds(20,0,0);assert(batches==1 && writes==4);
     sendRouteSpeeds(0,20,0);assert(batches==2 && writes==8);

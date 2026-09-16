@@ -74,6 +74,8 @@ int main(void)
     assert(routeAbs(routeEstimate(60,1000,0)-314.159265f) < 0.001f);
     assert(routeAbs(routeEstimate(-60,1000,1)+
                     314.159265f*ROUTE_LATERAL_SCALE) < 0.001f);
+    assert(routeAbs(routeEstimateScaled(-60,1000,0.925f)+
+                    314.159265f*0.925f) < 0.001f);
     assert(routeAbs(ROUTE_LATERAL_SCALE-0.8762f) < 0.0001f);
     assert(routeSpeed(1000,1000,120) == 120);
     assert(routeSpeed(5,1000,120) < routeSpeed(100,1000,120));

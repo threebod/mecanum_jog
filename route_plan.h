@@ -64,6 +64,10 @@ static float routeEstimate(int16_t rpm, uint32_t dt, uint8_t lateral)
     return rpm * (ROUTE_MM_PER_REV / 60000.0f) * dt *
            (lateral ? ROUTE_LATERAL_SCALE : ROUTE_FORWARD_SCALE);
 }
+static float routeEstimateScaled(int16_t rpm, uint32_t dt, float scale)
+{
+    return rpm * (ROUTE_MM_PER_REV / 60000.0f) * dt * scale;
+}
 /* Slew in physical time; fractional state avoids low-speed quantization stalls. */
 static float routeSlew(float current, float target, float rate, uint32_t dt)
 {
