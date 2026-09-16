@@ -1,0 +1,20 @@
+--cpu=Cortex-M4.fp.sp
+".\build\keil\config.o"
+".\build\keil\main.o"
+".\build\keil\platform.o"
+".\build\keil\protocol.o"
+".\build\keil\system_stm32f4xx.o"
+".\build\keil\transfer.o"
+".\build\keil\emm_v5.o"
+".\build\keil\misc.o"
+".\build\keil\stm32f4xx_rcc.o"
+".\build\keil\stm32f4xx_gpio.o"
+".\build\keil\stm32f4xx_tim.o"
+".\build\keil\stm32f4xx_usart.o"
+".\build\keil\stm32f4xx_can.o"
+".\build\keil\startup_stm32f40_41xxx.o"
+".\build\keil\syscalls.o"
+--strict --scatter ".\build\keil\stationary_transfer.sct"
+--summary_stderr --info summarysizes --map --load_addr_map_info --xref --callgraph --symbols
+--info sizes --info totals --info unused --info veneers
+--list ".\build\keil\stationary_transfer.map" -o .\build\keil\stationary_transfer.axf
