@@ -21,7 +21,7 @@ $prefix = @'
 #include "../map_navigation.h"
 #include "../straight_control.h"
 static uint8_t routeActive,routeWaiting,routeIndex,routeStartZone,routeStep;
-static uint8_t routeAuto,routeRotating,routeOnlyTurn,routeTurnInBand;
+static uint8_t routeAuto,routeRotating,routeOnlyTurn,routeTurnInBand,fullRouteRunning;
 static uint8_t motionMode,armed,imuValid=1,emergencyStop,jogCanFault;
 static int8_t routeHeading,routeNextHeading,yawSign=1;
 static float routeX,routeY,routeYaw,routeBaseYaw,imuYaw;
@@ -42,15 +42,21 @@ static int16_t straightDirection;
 static int16_t routeForward,routeRight,commandTurn;
 static uint32_t routeTick,routeLegStart,routeSettle,routeTurnStart,routeTurnStable,clockMs,imuStamp;
 static unsigned turnTicks;
-static uint8_t navInitialized,navRunning,navCurrentNode,navPath[NAV_NODE_COUNT],navPathCount;
-static uint32_t navLastReport;
+static uint8_t navInitialized,navRunning,navCurrentNode,navPathCount;
+static NavPoint navPath[NAV_PATH_CAPACITY];
+static uint32_t navLastReport,routeLastReport;
 static unsigned navPosReports,navDoneReports,navInvalidReports;
+static unsigned routePosReports,routeStageReports,routeDoneReports,routeInvalidReports;
 #define __disable_irq() ((void)0)
 #define __enable_irq() ((void)0)
 static void serialSendString(const char *s) {
     if(strcmp(s,"NAV POS x=")==0) ++navPosReports;
     if(strcmp(s,"NAV DONE x=")==0) ++navDoneReports;
     if(strncmp(s,"NAV INVALID",11)==0) ++navInvalidReports;
+    if(strcmp(s,"ROUTE POS x=")==0) ++routePosReports;
+    if(strcmp(s,"ROUTE STAGE index=")==0) ++routeStageReports;
+    if(strcmp(s,"ROUTE DONE x=")==0) ++routeDoneReports;
+    if(strncmp(s,"ROUTE INVALID",13)==0) ++routeInvalidReports;
 }
 static void serialSendChar(char c) {(void)c;}
 static void serialSendUint(uint16_t x) {(void)x;}
@@ -65,6 +71,7 @@ static void invalidateNavigation(const char *reason) {
 }
 static void stopAllMotors(void) {
     routeActive=routeWaiting=routeRotating=routeOnlyTurn=routeTurnInBand=0;
+    fullRouteRunning=0;
     routeForward=routeRight=commandTurn=0; armed=0;
     navInitialized=navRunning=navPathCount=0;
     routeDriveRpm=routeTurnRpm=routeCorrection=0;routeSentValid=0;
@@ -109,6 +116,7 @@ int main(void) {
     sendRouteSpeeds(0,0,0);assert(batches==3 && writes==12);
     for(sign=-1;sign<=1;sign+=2) for(start=1;start<=2;++start) {
         stopAllMotors(); yawSign=(int8_t)sign; imuYaw=179; turnTicks=0; armed=1;
+        routePosReports=routeStageReports=routeDoneReports=0;
         sprintf(cmd,"route auto %u",start);
         assert(processRouteCommand(cmd) && routeActive && routeAuto);
         assert(routeRpm==ROUTE_RPM);
@@ -116,6 +124,7 @@ int main(void) {
         assert(!routeActive && routeIndex==ROUTE_COUNT-1 && routeHeading==0);
         assert(routeX==2250 && routeY==(start==1?2250:150));
         assert(turnTicks>100);
+        assert(routePosReports>0 && routeStageReports==8 && routeDoneReports==1);
     }
     armed=1; assert(processRouteCommand("route step 1"));
     for(n=0;n<1000 && !routeWaiting;++n) tick();
@@ -164,6 +173,15 @@ int main(void) {
     navInvalidReports=0;clockMs+=20;imuStamp=clockMs-300;serviceRoute();
     assert(!navInitialized && !navRunning && navInvalidReports==1);
     assert(processNavCommand("nav goto 1200 1200") && !navRunning);
+    stopAllMotors();imuStamp=clockMs;imuValid=1;
+    assert(processNavCommand("nav init 1") && navInitialized);
+    armed=1;assert(processNavCommand("nav goto 300 300 120") && navRunning);
+    for(n=0;n<12000 && navRunning;++n) tick();
+    assert(navInitialized && !navRunning && routeX==300 && routeY==300 &&
+           navCurrentNode==NAV_INVALID_NODE);
+    armed=1;assert(processNavCommand("nav goto 1800 300 120") && navRunning);
+    for(n=0;n<12000 && navRunning;++n) tick();
+    assert(navInitialized && !navRunning && routeX==1800 && routeY==300);
     armed=1;imuStamp=clockMs;assert(processRouteCommand("route auto 1 120") && routeRpm==120);
     stopAllMotors();armed=1;imuStamp=clockMs;
     assert(processRouteCommand("route auto 1 121") && !routeActive);

@@ -10,6 +10,7 @@
 #define NAV_HEADING_LEFT 1
 #define NAV_HEADING_DOWN 2
 #define NAV_HEADING_KEEP 4
+#define NAV_PATH_CAPACITY 16U
 
 typedef enum {
     NAV_START_1 = 0,
@@ -150,6 +151,186 @@ static uint8_t navShortestPath(uint8_t start, uint8_t target,
     if (count > capacity) return 0U;
     for (node = 0U; node < count; ++node) path[node] = reverse[count - node - 1U];
     return count;
+}
+
+static uint8_t navPointClear(int16_t x, int16_t y)
+{
+    static const int16_t obstacleOrigin[2] = {550, 1400};
+    uint8_t ix;
+    uint8_t iy;
+    if (x < 150 || x > 2250 || y < 150 || y > 2250) return 0U;
+    for (ix = 0U; ix < 2U; ++ix) {
+        for (iy = 0U; iy < 2U; ++iy) {
+            if (x > obstacleOrigin[ix] - 150 &&
+                x < obstacleOrigin[ix] + 600 &&
+                y > obstacleOrigin[iy] - 150 &&
+                y < obstacleOrigin[iy] + 600) return 0U;
+        }
+    }
+    if (x < 300 && y > 760 && y < 1640) return 0U;
+    if (y < 300 && x > 760 && x < 1640) return 0U;
+    return 1U;
+}
+
+static uint8_t navSegmentClear(NavPoint from, NavPoint to)
+{
+    int16_t x = from.x;
+    int16_t y = from.y;
+    int16_t step;
+    if ((from.x != to.x && from.y != to.y) ||
+        !navPointClear(from.x, from.y) || !navPointClear(to.x, to.y)) return 0U;
+    if (from.x != to.x) {
+        step = from.x < to.x ? 1 : -1;
+        while (x != to.x) {
+            x = (int16_t)(x + step);
+            if (!navPointClear(x, y)) return 0U;
+        }
+    } else {
+        step = from.y < to.y ? 1 : -1;
+        while (y != to.y) {
+            y = (int16_t)(y + step);
+            if (!navPointClear(x, y)) return 0U;
+        }
+    }
+    return 1U;
+}
+
+typedef struct {
+    NavPoint points[2];
+    uint8_t count;
+} NavConnector;
+
+static uint8_t navConnector(NavPoint from, NavPoint to, uint8_t verticalFirst,
+                            NavConnector *connector)
+{
+    NavPoint bend;
+    if (connector == 0 || !navPointClear(from.x, from.y) ||
+        !navPointClear(to.x, to.y)) return 0U;
+    connector->count = 0U;
+    if (from.x == to.x || from.y == to.y) {
+        if (!navSegmentClear(from, to)) return 0U;
+    } else {
+        bend.x = verticalFirst ? from.x : to.x;
+        bend.y = verticalFirst ? to.y : from.y;
+        bend.arrivalHeading = NAV_HEADING_KEEP;
+        if (!navSegmentClear(from, bend) || !navSegmentClear(bend, to)) return 0U;
+        connector->points[connector->count++] = bend;
+    }
+    connector->points[connector->count++] = to;
+    return 1U;
+}
+
+static uint8_t navAppendPoint(NavPoint *path, uint8_t *count,
+                              uint8_t capacity, NavPoint point)
+{
+    if (*count > 0U && path[*count - 1U].x == point.x &&
+        path[*count - 1U].y == point.y) {
+        path[*count - 1U].arrivalHeading = point.arrivalHeading;
+        return 1U;
+    }
+    if (*count >= 2U) {
+        NavPoint before = path[*count - 2U];
+        NavPoint previous = path[*count - 1U];
+        if ((before.x == previous.x && previous.x == point.x) ||
+            (before.y == previous.y && previous.y == point.y)) {
+            path[*count - 1U] = point;
+            return 1U;
+        }
+    }
+    if (*count >= capacity) return 0U;
+    path[(*count)++] = point;
+    return 1U;
+}
+
+static uint32_t navManhattan(NavPoint first, NavPoint second)
+{
+    int32_t dx = (int32_t)first.x - second.x;
+    int32_t dy = (int32_t)first.y - second.y;
+    return (uint32_t)(dx < 0 ? -dx : dx) +
+           (uint32_t)(dy < 0 ? -dy : dy);
+}
+
+static uint8_t navPlanPath(NavPoint start, NavPoint target,
+                           NavPoint *path, uint8_t capacity)
+{
+    uint8_t entry;
+    uint8_t exitNode;
+    uint8_t startOrder;
+    uint8_t targetOrder;
+    uint8_t bestCount = 0U;
+    uint32_t bestDistance = 0xFFFFFFFFUL;
+    NavPoint best[NAV_PATH_CAPACITY];
+    uint8_t targetNode;
+    if (path == 0 || capacity == 0U || capacity > NAV_PATH_CAPACITY ||
+        !navPointClear(start.x, start.y) ||
+        !navPointClear(target.x, target.y)) return 0U;
+    targetNode = navNodeAt(target.x, target.y);
+    target.arrivalHeading = targetNode == NAV_INVALID_NODE ?
+                            NAV_HEADING_KEEP : navPoint(targetNode).arrivalHeading;
+    if (start.x == target.x && start.y == target.y) {
+        path[0] = target;
+        return 1U;
+    }
+    for (entry = 0U; entry < NAV_NODE_COUNT; ++entry) {
+        for (exitNode = 0U; exitNode < NAV_NODE_COUNT; ++exitNode) {
+            uint8_t graph[NAV_NODE_COUNT];
+            uint8_t graphCount = navShortestPath(entry, exitNode, graph,
+                                                 NAV_NODE_COUNT);
+            uint16_t graphDistance = 0U;
+            uint8_t graphIndex;
+            if (graphCount == 0U) continue;
+            for (graphIndex = 1U; graphIndex < graphCount; ++graphIndex) {
+                graphDistance = (uint16_t)(graphDistance +
+                    navEdgeDistance(graph[graphIndex - 1U], graph[graphIndex]));
+            }
+            for (startOrder = 0U; startOrder < 2U; ++startOrder) {
+                NavConnector startConnector;
+                if (!navConnector(start, navPoint(entry), startOrder,
+                                  &startConnector)) continue;
+                for (targetOrder = 0U; targetOrder < 2U; ++targetOrder) {
+                    NavConnector targetConnector;
+                    NavPoint candidate[NAV_PATH_CAPACITY];
+                    uint8_t candidateCount = 0U;
+                    uint8_t index;
+                    uint32_t distance;
+                    if (!navConnector(navPoint(exitNode), target, targetOrder,
+                                      &targetConnector)) continue;
+                    distance = navManhattan(start, navPoint(entry)) +
+                               graphDistance +
+                               navManhattan(navPoint(exitNode), target);
+                    if (distance >= bestDistance) continue;
+                    for (index = 0U; index < startConnector.count; ++index) {
+                        if (!navAppendPoint(candidate, &candidateCount, capacity,
+                                            startConnector.points[index])) break;
+                    }
+                    if (index != startConnector.count) continue;
+                    for (index = 1U; index < graphCount; ++index) {
+                        NavPoint point = navPoint(graph[index]);
+                        point.arrivalHeading = NAV_HEADING_KEEP;
+                        if (!navAppendPoint(candidate, &candidateCount, capacity,
+                                            point)) break;
+                    }
+                    if (index != graphCount) continue;
+                    for (index = 0U; index < targetConnector.count; ++index) {
+                        NavPoint point = targetConnector.points[index];
+                        if (index + 1U < targetConnector.count)
+                            point.arrivalHeading = NAV_HEADING_KEEP;
+                        if (!navAppendPoint(candidate, &candidateCount, capacity,
+                                            point)) break;
+                    }
+                    if (index != targetConnector.count || candidateCount == 0U)
+                        continue;
+                    for (index = 0U; index < candidateCount; ++index)
+                        best[index] = candidate[index];
+                    bestCount = candidateCount;
+                    bestDistance = distance;
+                }
+            }
+        }
+    }
+    if (bestCount == 0U) return 0U;
+    for (entry = 0U; entry < bestCount; ++entry) path[entry] = best[entry];
+    return bestCount;
 }
 
 #endif

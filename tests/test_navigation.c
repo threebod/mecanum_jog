@@ -43,6 +43,10 @@ int main(void)
     uint8_t to;
     uint8_t path[NAV_NODE_COUNT];
     uint8_t count;
+    NavPoint route[NAV_PATH_CAPACITY];
+    NavPoint repeated[NAV_PATH_CAPACITY];
+    NavPoint arbitrary = {300, 300, NAV_HEADING_KEEP};
+    NavPoint second = {1800, 300, NAV_HEADING_KEEP};
 
     assert(navStartNode(1U) == NAV_START_1);
     assert(navStartNode(2U) == NAV_START_2);
@@ -54,6 +58,13 @@ int main(void)
     assert(navPoint(NAV_RAW).arrivalHeading == NAV_HEADING_UP);
     assert(navPoint(NAV_COARSE).arrivalHeading == NAV_HEADING_DOWN);
     assert(navPoint(NAV_TEMP).arrivalHeading == NAV_HEADING_LEFT);
+    assert(navPointClear(150, 150));
+    assert(navPointClear(2250, 2250));
+    assert(!navPointClear(149, 150));
+    assert(!navPointClear(700, 700));
+    assert(navSegmentClear(navPoint(NAV_GATE_1), navPoint(NAV_UPPER_RIGHT)));
+    assert(!navSegmentClear((NavPoint){300, 700, NAV_HEADING_KEEP},
+                            (NavPoint){1200, 700, NAV_HEADING_KEEP}));
 
     count = navShortestPath(NAV_START_1, NAV_RAW, path, NAV_NODE_COUNT);
     assert(count == 4U);
@@ -82,6 +93,32 @@ int main(void)
                                 navPoint(path[index]));
             }
         }
+    }
+
+    count = navPlanPath(navPoint(NAV_START_1), arbitrary, route,
+                        NAV_PATH_CAPACITY);
+    assert(count > 0U);
+    assert(route[count - 1U].x == arbitrary.x &&
+           route[count - 1U].y == arbitrary.y &&
+           route[count - 1U].arrivalHeading == NAV_HEADING_KEEP);
+    for (from = 1U; from < count; ++from) {
+        assert(navSegmentClear(route[from - 1U], route[from]));
+    }
+    assert(navPlanPath(arbitrary, second, route, NAV_PATH_CAPACITY) > 0U);
+    count = navPlanPath(navPoint(NAV_START_2), navPoint(NAV_COARSE), route,
+                        NAV_PATH_CAPACITY);
+    assert(count > 0U &&
+           route[count - 1U].arrivalHeading == NAV_HEADING_DOWN);
+    assert(navPlanPath(navPoint(NAV_START_1),
+                       (NavPoint){700, 700, NAV_HEADING_KEEP}, route,
+                       NAV_PATH_CAPACITY) == 0U);
+    count = navPlanPath(navPoint(NAV_START_1), arbitrary, route,
+                        NAV_PATH_CAPACITY);
+    assert(navPlanPath(navPoint(NAV_START_1), arbitrary, repeated,
+                       NAV_PATH_CAPACITY) == count);
+    for (from = 0U; from < count; ++from) {
+        assert(route[from].x == repeated[from].x &&
+               route[from].y == repeated[from].y);
     }
 
     puts("PASS: navigation nodes, deterministic paths and swept clearance");
