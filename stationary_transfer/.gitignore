@@ -1,0 +1,6 @@
+build/*.o
+build/test_controller.exe
+build/keil/
+**/__pycache__/
+*.uvguix.*
+*.uvoptx
