@@ -72,7 +72,9 @@ int main(void)
     assert(routeWheel(3,0,0,5,1000) == -5);
     assert(routeWheel(4,0,0,5,1000) == 5);
     assert(routeAbs(routeEstimate(60,1000,0)-314.159265f) < 0.001f);
-    assert(routeAbs(routeEstimate(-60,1000,1)+314.159265f) < 0.001f);
+    assert(routeAbs(routeEstimate(-60,1000,1)+
+                    314.159265f*ROUTE_LATERAL_SCALE) < 0.001f);
+    assert(routeAbs(ROUTE_LATERAL_SCALE-0.8762f) < 0.0001f);
     assert(routeSpeed(1000,1000,120) == 120);
     assert(routeSpeed(5,1000,120) < routeSpeed(100,1000,120));
     routeBody(20,0,1,&forward,&right); assert(forward==0 && right==20);

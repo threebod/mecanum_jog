@@ -8,7 +8,8 @@
  * No wheel/ground odometry: progress is an estimate from commanded RPM.
  * Replace scales with measured actual_mm / nominal_mm on the test surface. */
 #define ROUTE_FORWARD_SCALE 1.0f
-#define ROUTE_LATERAL_SCALE 1.0f
+/* Zone 2 -> coarse: 1050 mm map-X travel was about 130 mm short. */
+#define ROUTE_LATERAL_SCALE 0.8762f
 #define ROUTE_MM_PER_REV    314.159265f /* pi * 100 mm, direct drive G=1 */
 #define ROUTE_RPM           60
 #define ROUTE_ACCEL_RPM_S   120.0f
