@@ -1,0 +1,9 @@
+.\build\keil\main.o: firmware\main.c
+.\build\keil\main.o: firmware\platform.h
+.\build\keil\main.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
+.\build\keil\main.o: firmware\config.h
+.\build\keil\main.o: firmware\protocol.h
+.\build\keil\main.o: firmware\transfer.h
+.\build\keil\main.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdio.h
+.\build\keil\main.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\string.h
+.\build\keil\main.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\math.h

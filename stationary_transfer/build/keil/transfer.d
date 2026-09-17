@@ -1,0 +1,9 @@
+.\build\keil\transfer.o: firmware\transfer.c
+.\build\keil\transfer.o: firmware\transfer.h
+.\build\keil\transfer.o: firmware\config.h
+.\build\keil\transfer.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
+.\build\keil\transfer.o: firmware\protocol.h
+.\build\keil\transfer.o: firmware\platform.h
+.\build\keil\transfer.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\string.h
+.\build\keil\transfer.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\math.h
+.\build\keil\transfer.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdlib.h
