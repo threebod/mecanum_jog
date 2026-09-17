@@ -104,7 +104,9 @@ static uint8_t navPathCount;
 static uint32_t navLastReport, routeLastReport;
 static float routeDriveRpm, routeTurnRpm, routeCorrection;
 static uint16_t routeRpm = ROUTE_RPM;
+static float routeForwardScale = ROUTE_FORWARD_SCALE;
 static float routeLateralScale = ROUTE_LATERAL_SCALE;
+static uint16_t routeTurnRpmLimit = (uint16_t)ROUTE_TURN_RPM;
 static int16_t routeSent[4];
 static uint8_t routeSentValid;
 static uint8_t straightLateral;
@@ -327,7 +329,7 @@ static void printHelp(void)
     serialSendString("  route step 1|2 [rpm]   pause at EVERY waypoint (arm)\r\n");
     serialSendString("  route next       continue from a stopped checkpoint\r\n");
     serialSendString("  route status     estimated position / checkpoint\r\n");
-    serialSendString("  route scale 5000..15000  lateral 50.00%..150.00%, RAM only\r\n");
+    serialSendString("  route tune F L T  forward/lateral bp and turn RPM, RAM only\r\n");
     serialSendString("  route auto 1|2 [rpm]   full route; rpm 10..120 (arm)\r\n");
     serialSendString("  turn L|R 1..180  relative IMU turn in clear space (arm)\r\n");
     serialSendString("  nav init 1|2       set estimated start pose; fresh IMU, idle\r\n");
@@ -1209,8 +1211,12 @@ static void printRouteStatus(void)
     serialSendString("point="); serialSendUint((uint16_t)(routeIndex + 1U));
     serialSendString(" estimated_x_mm="); serialSendUint((uint16_t)(routeX < 0 ? 0 : routeX));
     serialSendString(" estimated_y_mm="); serialSendUint((uint16_t)(routeY < 0 ? 0 : routeY));
+    serialSendString(" forward_scale_bp=");
+    serialSendUint((uint16_t)(routeForwardScale * 10000.0f + 0.5f));
     serialSendString(" lateral_scale_bp=");
     serialSendUint((uint16_t)(routeLateralScale * 10000.0f + 0.5f));
+    serialSendString(" turn_rpm=");
+    serialSendUint(routeTurnRpmLimit);
     serialSendString(" (command estimate, NOT localization)\r\n");
 }
 
@@ -1406,7 +1412,9 @@ static void serviceRoute(void)
         if (!routeTurnInBand && routeAbs(error) <= 2.0f) routeTurnInBand = 1U;
         if (routeTurnInBand && routeAbs(error) > 3.5f) routeTurnInBand = 0U;
         routeTurnRpm = routeSlew(routeTurnRpm,
-            routeTurnInBand ? 0.0f : (float)routeTurnSpeed(error, yawSign), ROUTE_TURN_ACCEL, dt);
+            routeTurnInBand ? 0.0f :
+            (float)routeTurnSpeedLimited(error, yawSign, routeTurnRpmLimit),
+            ROUTE_TURN_ACCEL, dt);
         sendRouteSpeeds(0, 0, routeRound(routeTurnRpm));
         if (routeTurnInBand && routeRound(routeTurnRpm) == 0) {
             if (routeTurnInBand == 1U) { routeTurnStable = now; routeTurnInBand = 2U; }
@@ -1424,10 +1432,10 @@ static void serviceRoute(void)
     /* Integration only estimates travel. IMU constrains yaw, not XY drift. */
     routeX += routeEstimateScaled(routeRight, dt,
         (routeHeading == 0 || routeHeading == 2) ?
-        routeLateralScale : ROUTE_FORWARD_SCALE);
+        routeLateralScale : routeForwardScale);
     routeY += routeEstimateScaled(routeForward, dt,
         (routeHeading == 1 || routeHeading == -1) ?
-        routeLateralScale : ROUTE_FORWARD_SCALE);
+        routeLateralScale : routeForwardScale);
     if (navRunning && now - navLastReport >= 200U) {
         navLastReport = now;
         printNavPose("RUN");
@@ -1615,9 +1623,31 @@ static uint8_t processNavCommand(const char *command)
 static uint8_t processRouteCommand(const char *command)
 {
     uint8_t start, step, autoRun;
-    uint16_t degrees, rpm;
+    uint16_t degrees, rpm, forwardBp, lateralBp;
     const char *cursor;
     if (strcmp(command, "route status") == 0) { printRouteStatus(); return 1U; }
+    if (strncmp(command, "route tune ", 11U) == 0) {
+        cursor = command + 11U;
+        if (!parseUint(&cursor, &forwardBp) ||
+            !parseUint(&cursor, &lateralBp) ||
+            !parseUint(&cursor, &rpm) || *cursor != '\0' ||
+            forwardBp < 5000U || forwardBp > 15000U ||
+            lateralBp < 5000U || lateralBp > 15000U ||
+            rpm < 10U || rpm > 120U) {
+            serialSendString("ERR ROUTE: tune F L T; scales 5000..15000, turn 10..120rpm\r\n");
+            return 1U;
+        }
+        if (motionMode || routeActive) {
+            serialSendString("ERR ROUTE: tune requires idle; stop first\r\n");
+            return 1U;
+        }
+        routeForwardScale = forwardBp / 10000.0f;
+        routeLateralScale = lateralBp / 10000.0f;
+        routeTurnRpmLimit = rpm;
+        serialSendString("OK route tune RAM_only\r\n");
+        printRouteStatus();
+        return 1U;
+    }
     if (strncmp(command, "route scale ", 12U) == 0) {
         cursor = command + 12U;
         if (!parseUint(&cursor, &degrees) || *cursor != '\0' ||

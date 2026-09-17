@@ -8,8 +8,8 @@
  * No wheel/ground odometry: progress is an estimate from commanded RPM.
  * Replace scales with measured actual_mm / nominal_mm on the test surface. */
 #define ROUTE_FORWARD_SCALE 1.0f
-/* Zone 2 -> coarse: 1050 mm map-X travel was about 130 mm short. */
-#define ROUTE_LATERAL_SCALE 0.8762f
+/* Six 100 RPM center tests averaged 103.9 cm vs 105 cm nominal at 90%. */
+#define ROUTE_LATERAL_SCALE 0.9f
 #define ROUTE_MM_PER_REV    314.159265f /* pi * 100 mm, direct drive G=1 */
 #define ROUTE_RPM           60
 #define ROUTE_ACCEL_RPM_S   120.0f
@@ -43,12 +43,17 @@ static void routeBody(int16_t mapUp, int16_t mapRight, int8_t heading,
     default: *forward = mapUp; *right = mapRight; break;
     }
 }
-static int16_t routeTurnSpeed(float error, int8_t sign)
+static int16_t routeTurnSpeedLimited(float error, int8_t sign,
+                                     uint16_t maximumRpm)
 {
     float speed = error * 1.2f;
-    if (speed > ROUTE_TURN_RPM) speed = ROUTE_TURN_RPM;
-    if (speed < -ROUTE_TURN_RPM) speed = -ROUTE_TURN_RPM;
+    if (speed > maximumRpm) speed = maximumRpm;
+    if (speed < -(float)maximumRpm) speed = -(float)maximumRpm;
     return (int16_t)(speed * sign);
+}
+static int16_t routeTurnSpeed(float error, int8_t sign)
+{
+    return routeTurnSpeedLimited(error, sign, (uint16_t)ROUTE_TURN_RPM);
 }
 /* Positive lateral means right. IDs: FR=1 FL=2 RL=3 RR=4.
  * Matches existing W/S/A/D sign table, conventional X roller layout. */

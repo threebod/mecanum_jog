@@ -70,6 +70,7 @@ $requiredMainPatterns = @(
     '(?s)static void printFullRoutePose\(const char \*state\).*?ROUTE POS x=.*?target_x=.*?target_y=',
     '(?s)static void finishFullRoute\(void\).*?ROUTE DONE x=',
     '(?s)route scale .*?degrees < 5000U.*?degrees > 15000U.*?routeLateralScale = degrees / 10000.0f',
+    '(?s)route tune .*?routeForwardScale = forwardBp / 10000.0f.*?routeLateralScale = lateralBp / 10000.0f.*?routeTurnRpmLimit = rpm',
     'Emm_V5_Synchronous_motion\(0x00\)',
     '(?s)static CommandResult parseServoCommand\(const char \*line,.*?channel < 2U \|\| channel > 4U.*?channel < 4U && angle > 270U.*?channel == 4U && angle > 360U',
     '(?s)strncmp\(command, "servo ", 6U\) == 0.*?processServoCommand\(command\)',

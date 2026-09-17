@@ -76,7 +76,7 @@ int main(void)
                     314.159265f*ROUTE_LATERAL_SCALE) < 0.001f);
     assert(routeAbs(routeEstimateScaled(-60,1000,0.925f)+
                     314.159265f*0.925f) < 0.001f);
-    assert(routeAbs(ROUTE_LATERAL_SCALE-0.8762f) < 0.0001f);
+    assert(routeAbs(ROUTE_LATERAL_SCALE-0.9f) < 0.0001f);
     assert(routeSpeed(1000,1000,120) == 120);
     assert(routeSpeed(5,1000,120) < routeSpeed(100,1000,120));
     routeBody(20,0,1,&forward,&right); assert(forward==0 && right==20);
@@ -88,6 +88,7 @@ int main(void)
     assert(routeTurnSpeed(90,1)==30 && routeTurnSpeed(-90,1)==-30);
     assert(routeTurnSpeed(90,-1)==-30 && routeTurnSpeed(-90,-1)==30);
     assert(routeTurnSpeed(3,1)==3);
+    assert(routeTurnSpeedLimited(90,1,45)==45);
     assert(routeSpeed(1000,0,60)==0);
     assert(routeSpeed(1000,350,60)==30);
     assert(routeSpeed(5,1000,60)>3); /* no long minimum-speed crawl */
