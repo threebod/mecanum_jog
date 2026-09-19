@@ -13,7 +13,9 @@
 #define MECHANISM_ACCEL_MIN 1U
 #define MECHANISM_ACCEL_MAX 240U
 #define MECHANISM_TURRET_SPEED_MIN 10U
-#define MECHANISM_TURRET_SPEED_MAX 300U
+#define MECHANISM_TURRET_SPEED_MAX 1800U
+#define MECHANISM_MOTOR_SETTLE_MS 500U
+#define MECHANISM_TURRET_SETTLE_MS 100U
 
 typedef struct {
     int16_t horizontalDmm;
@@ -32,6 +34,8 @@ typedef struct {
     uint8_t platform;
     uint16_t gripperOpenDeg;
     uint16_t gripperCloseDeg;
+    uint16_t gripperDps10;
+    uint16_t platformDps10;
     uint16_t platformDeg[3];
 } MechanismInitialState;
 
@@ -81,9 +85,9 @@ typedef struct {
     uint32_t lastReportMs;
 } MechanismState;
 
-#define MECH_INITIAL_STATE(H, L, T, HR, HA, LR, LA, TS, GRIP, PLATFORM, GO, GC, P1, P2, P3) \
+#define MECH_INITIAL_STATE(H, L, T, HR, HA, LR, LA, TS, GS, PS, GRIP, PLATFORM, GO, GC, P1, P2, P3) \
     {{(H), (L), (T), (HR), (HA), (LR), (LA), (TS)}, (GRIP), (PLATFORM), \
-     (GO), (GC), {(P1), (P2), (P3)}}
+     (GO), (GC), (GS), (PS), {(P1), (P2), (P3)}}
 
 #define MECH_POSE(H, L, T, HR, HA, LR, LA, TS, WAIT) \
     {MECHANISM_ACTION_POSE, 0U, 0U, (WAIT), \
@@ -136,7 +140,9 @@ static uint32_t mechanismLiftPulses(int16_t deltaDmm)
 static uint32_t mechanismMotorDurationMs(uint32_t pulses, uint16_t rpm)
 {
     uint32_t denominator = 3200U * (uint32_t)rpm;
-    return (pulses * 60000U + denominator - 1U) / denominator + 3000U;
+    if (pulses == 0U) return 0U;
+    return (pulses * 60000U + denominator - 1U) / denominator +
+           MECHANISM_MOTOR_SETTLE_MS;
 }
 
 static uint32_t mechanismMoveDurationMs(const MechanismPose *current,
@@ -153,8 +159,9 @@ static uint32_t mechanismMoveDurationMs(const MechanismPose *current,
         mechanismHorizontalPulses(horizontalDelta), target->horizontalRpm);
     uint32_t liftMs = mechanismMotorDurationMs(
         mechanismLiftPulses(liftDelta), target->liftRpm);
-    uint32_t turretMs = (uint32_t)turretDelta * 1000U /
-                        target->turretDps10 + 500U;
+    uint32_t turretMs = turretDelta == 0U ? 0U :
+        (uint32_t)turretDelta * 1000U / target->turretDps10 +
+        MECHANISM_TURRET_SETTLE_MS;
     uint32_t maximum = horizontalMs > liftMs ? horizontalMs : liftMs;
     return maximum > turretMs ? maximum : turretMs;
 }
@@ -222,7 +229,7 @@ static uint8_t mechanismParseCommand(const char *text, MechanismCommand *command
         pose.horizontalAccel = 50U;
         pose.liftRpm = 30U;
         pose.liftAccel = 50U;
-        pose.turretDps10 = 130U;
+        pose.turretDps10 = 1200U;
         if (!mechanismPoseValid(&pose)) return 0U;
         command->type = MECHANISM_COMMAND_INIT;
         command->pose = pose;

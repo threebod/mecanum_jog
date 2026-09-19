@@ -8,10 +8,11 @@ int main(void)
     MechanismCommand command;
     MechanismState state;
     MechanismPose pose = {-1220, 0, 0, 10, 1, 10, 1, 10};
-    MechanismPose fast = {650, 1350, 3600, 2000, 240, 2000, 240, 300};
+    MechanismPose fast = {650, 1350, 3600, 2000, 240, 2000, 240, 1800};
     MechanismPose invalid = fast;
     MechanismInitialState initial = MECH_INITIAL_STATE(
-        0, 0, 684, 30, 50, 30, 50, 130, 1, 2, 45, 6, 20, 139, 256);
+        0, 0, 684, 30, 50, 30, 50, 130, 1800, 1700,
+        1, 2, 45, 6, 20, 139, 256);
     MechanismAction actions[] = {
         MECH_POSE(-480, 250, 1350, 30, 50, 30, 50, 130, 500),
         MECH_GRIPPER_CLOSE(300),
@@ -38,7 +39,7 @@ int main(void)
     invalid.liftAccel = 241;
     assert(!mechanismPoseValid(&invalid));
     invalid = fast;
-    invalid.turretDps10 = 301;
+    invalid.turretDps10 = 1801;
     assert(!mechanismPoseValid(&invalid));
 
     assert(mechanismHorizontalPulses(480) == 1222U);
@@ -46,11 +47,14 @@ int main(void)
     assert(mechanismHorizontalPulses(0) == 0U);
     assert(mechanismLiftPulses(250) == 2000U);
     assert(mechanismLiftPulses(-250) == 2000U);
-    assert(mechanismMoveDurationMs(&pose, &fast) > 3000U);
+    assert(mechanismMotorDurationMs(0U, 30U) == 0U);
+    assert(mechanismMoveDurationMs(&pose, &pose) == 0U);
+    assert(mechanismMoveDurationMs(&pose, &fast) == 2100U);
 
     assert(mechanismParseCommand("mech init 0 0 684", &command));
     assert(command.type == MECHANISM_COMMAND_INIT);
-    assert(command.pose.horizontalDmm == 0 && command.pose.turretDdeg == 684U);
+    assert(command.pose.horizontalDmm == 0 && command.pose.turretDdeg == 684U &&
+           command.pose.turretDps10 == 1200U);
     assert(mechanismParseCommand(
         "mech pose -480 250 1350 30 50 30 50 130", &command));
     assert(command.type == MECHANISM_COMMAND_POSE);
@@ -78,6 +82,7 @@ int main(void)
     assert(!state.valid && !state.running);
 
     assert(initial.pose.turretDdeg == 684U);
+    assert(initial.gripperDps10 == 1800U && initial.platformDps10 == 1700U);
     assert(initial.gripperOpen == 1U && initial.platform == 2U);
     assert(initial.platformDeg[2] == 256U);
     assert(actions[0].type == MECHANISM_ACTION_POSE);

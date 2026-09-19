@@ -23,6 +23,7 @@ $prefix = @'
 static uint8_t routeActive,routeWaiting,routeIndex,routeStartZone,routeStep;
 static uint8_t routeAuto,routeRotating,routeOnlyTurn,routeTurnInBand,fullRouteRunning;
 static uint8_t motionMode,armed,imuValid=1,emergencyStop,jogCanFault;
+static uint8_t auxMoveMotorId;
 static int8_t routeHeading,routeNextHeading,yawSign=1;
 static float routeX,routeY,routeYaw,routeBaseYaw,imuYaw;
 static float routeDriveRpm,routeTurnRpm,routeCorrection;
@@ -36,6 +37,7 @@ static const uint8_t motorDirections[1][5]={{1,1,0,0,1}};
 static uint8_t motorInvert[5];
 static uint16_t motorTrim[5]={1000,1000,1000,1000,1000};
 static unsigned batches, writes;
+static unsigned statusReads;
 static uint8_t straightLateral;
 static float straightSpeedState,straightTurnState,targetYaw;
 static uint32_t motionStart,motionDuration,lastControl;
@@ -51,6 +53,10 @@ static unsigned navPosReports,navDoneReports,navInvalidReports;
 static unsigned routePosReports,routeStageReports,routeDoneReports,routeInvalidReports;
 #define __disable_irq() ((void)0)
 #define __enable_irq() ((void)0)
+#define AUX_MOVE_STATUS_POLL_MS 50U
+#define S_FLAG 13
+typedef struct {uint32_t ExtId;uint8_t DLC;uint8_t Data[8];} TestCanRxMsg;
+static struct {TestCanRxMsg CAN_RxMsg;bool rxFrameFlag;} can;
 static void serialSendString(const char *s) {
     if(strcmp(s,"NAV POS x=")==0) ++navPosReports;
     if(strcmp(s,"NAV DONE x=")==0) ++navDoneReports;
@@ -87,6 +93,9 @@ static void Emm_V5_Synchronous_motion(uint8_t id) {
     assert(id==0);++batches;
     commandTurn=(int16_t)((staged[0]-staged[1]-staged[2]+staged[3])/4);
     if(commandTurn) ++turnTicks;
+}
+static void Emm_V5_Read_Sys_Params(uint8_t id,int parameter) {
+    assert(id==auxMoveMotorId && parameter==S_FLAG);++statusReads;
 }
 '@
 $suffix = @'
@@ -210,6 +219,11 @@ int main(void) {
         }
         assert(!motionMode && peak==60);
     }
+    n=statusReads;motionMode=3;auxMoveMotorId=5;motionStart=lastControl=clockMs;motionDuration=1000;
+    clockMs+=50;serviceMotion();assert(motionMode==3 && statusReads==n+1);
+    can.CAN_RxMsg.ExtId=5U<<8;can.CAN_RxMsg.DLC=3;
+    can.CAN_RxMsg.Data[0]=0x3A;can.CAN_RxMsg.Data[1]=0x02;can.CAN_RxMsg.Data[2]=0x6B;
+    can.rxFrameFlag=true;serviceMotion();assert(motionMode==0);
     /* No repeated stop/restart as measurement oscillates around entry boundary. */
     armed=1;processRouteCommand("turn L 90");
     imuYaw=routeYaw-1.9f;clockMs+=20;imuStamp=clockMs;serviceRoute();

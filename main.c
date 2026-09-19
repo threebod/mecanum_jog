@@ -20,14 +20,17 @@
 #define MOTOR_TEST_ACCEL   50U
 #define MOTOR_TEST_PULSES  160U
 #define CAN_CHECK_TIMEOUT_MS  300U
+#define AUX_MOVE_STATUS_POLL_MS  50U
+#define AUX_MOVE_TIMEOUT_MARGIN_MS  3000U
 #define HOST_HEARTBEAT_TIMEOUT_MS  1000U
 
 #define SERVO_MIN_PULSE_US    500U
 #define SERVO_PULSE_RANGE_US  2000U
 #define SERVO_PERIOD_US       20000U
-#define SERVO_SPEED_DPS       30U
+#define SERVO_DEFAULT_SPEED_DPS10 1200U
+#define SERVO_MAX_SPEED_DPS10     1800U
 #define SERVO_UPDATE_HZ       50U
-#define SERVO_STEP_MDEG       ((SERVO_SPEED_DPS * 1000U) / SERVO_UPDATE_HZ)
+#define SERVO_STEP_MDEG       ((SERVO_DEFAULT_SPEED_DPS10 * 100U) / SERVO_UPDATE_HZ)
 
 typedef enum {
     DIRECTION_FORWARD = 0,
@@ -40,12 +43,14 @@ typedef enum {
     COMMAND_OK = 0,
     COMMAND_FORMAT_ERROR,
     COMMAND_SERVO_ERROR,
-    COMMAND_ANGLE_ERROR
+    COMMAND_ANGLE_ERROR,
+    COMMAND_SPEED_ERROR
 } CommandResult;
 
 typedef struct {
     uint8_t channel;
     uint16_t angle;
+    uint16_t speedDps10;
 } ServoCommand;
 
 /* Index 0 is unused; indexes 1..4 are the motor CAN addresses. */
@@ -81,9 +86,10 @@ static uint8_t imuFrame[11], imuLength;
 static uint8_t motorInvert[5];
 static uint16_t motorTrim[5] = {1000U, 1000U, 1000U, 1000U, 1000U};
 static int8_t yawSign = 1;
-/* 0 idle, 1 finite position test window, 2 IMU heading hold. */
+/* 0 idle, 1 finite position test window, 2 IMU heading hold, 3 aux position. */
 static uint8_t motionMode;
 static uint32_t motionStart, motionDuration, lastControl;
+static uint8_t auxMoveMotorId;
 static uint16_t straightRpm;
 static int16_t straightDirection;
 static float targetYaw;
@@ -310,8 +316,9 @@ static void printHelp(void)
     serialSendString("  arm       authorize ONE motion command\r\n");
     serialSendString("  disable   stop/disable motors 1..6 and disarm\r\n");
     serialSendString("  motor N D jog motor 5|6 in direction 0|1 (armed)\r\n");
+    serialSendString("  auxmove N D R A move motor 5|6 by signed 0.1mm (armed)\r\n");
     serialSendString("  cancheck N query motor 1..6 CAN status\r\n");
-    serialSendString("  servo N A set servo 2..4 to angle A\r\n");
+    serialSendString("  servo N A [S] set angle; speed S=10..1800 x0.1dps\r\n");
     serialSendString("  W/S/A/D   forward/back/left/right\r\n");
     serialSendString("  X, stop   stop motors/servo motion and disarm\r\n");
     serialSendString("  !         emergency stop motors/servo motion\r\n");
@@ -369,6 +376,7 @@ static CommandResult parseServoCommand(const char *line, ServoCommand *command)
     const char *cursor = line;
     uint16_t channel;
     uint16_t angle;
+    uint16_t speedDps10 = SERVO_DEFAULT_SPEED_DPS10;
 
     if (strncmp(cursor, "servo ", 6U) != 0) {
         return COMMAND_FORMAT_ERROR;
@@ -377,11 +385,11 @@ static CommandResult parseServoCommand(const char *line, ServoCommand *command)
     if (!parseUint(&cursor, &channel) || !parseUint(&cursor, &angle)) {
         return COMMAND_FORMAT_ERROR;
     }
-    while (*cursor == ' ') {
-        cursor++;
-    }
+    while (*cursor == ' ') cursor++;
     if (*cursor != '\0') {
-        return COMMAND_FORMAT_ERROR;
+        if (!parseUint(&cursor, &speedDps10)) return COMMAND_FORMAT_ERROR;
+        while (*cursor == ' ') cursor++;
+        if (*cursor != '\0') return COMMAND_FORMAT_ERROR;
     }
     if (channel < 2U || channel > 4U) {
         return COMMAND_SERVO_ERROR;
@@ -390,9 +398,13 @@ static CommandResult parseServoCommand(const char *line, ServoCommand *command)
         (channel == 4U && angle > 360U)) {
         return COMMAND_ANGLE_ERROR;
     }
+    if (speedDps10 < 10U || speedDps10 > SERVO_MAX_SPEED_DPS10) {
+        return COMMAND_SPEED_ERROR;
+    }
 
     command->channel = (uint8_t)channel;
     command->angle = angle;
+    command->speedDps10 = speedDps10;
     return COMMAND_OK;
 }
 
@@ -523,10 +535,11 @@ static uint8_t servoSetTargetMdeg(uint8_t channel, uint32_t target,
     return servoChannelMoving[index];
 }
 
-static uint8_t servoSetTarget(uint8_t channel, uint16_t angle)
+static uint8_t servoSetTarget(uint8_t channel, uint16_t angle,
+                              uint16_t speedDps10)
 {
     return servoSetTargetMdeg(channel, (uint32_t)angle * 1000U,
-                              SERVO_SPEED_DPS * 10U);
+                              speedDps10);
 }
 
 static void stopServoMotion(void)
@@ -568,7 +581,7 @@ static void processServoCommand(const char *commandText)
     uint8_t moving;
 
     if (result == COMMAND_FORMAT_ERROR) {
-        serialSendString("ERR format: servo <2|3|4> <angle>\r\n");
+        serialSendString("ERR format: servo <2|3|4> <angle> [speed_dps10]\r\n");
         return;
     }
     if (result == COMMAND_SERVO_ERROR) {
@@ -579,16 +592,23 @@ static void processServoCommand(const char *commandText)
         serialSendString("ERR angle: servo 2/3=0..270, servo 4=0..360\r\n");
         return;
     }
+    if (result == COMMAND_SPEED_ERROR) {
+        serialSendString("ERR speed: 10..1800 x0.1dps\r\n");
+        return;
+    }
 
     pulse = servoAngleToPulse(command.channel,
                               (uint32_t)command.angle * 1000U);
-    moving = servoSetTarget(command.channel, command.angle);
+    moving = servoSetTarget(command.channel, command.angle,
+                            command.speedDps10);
     serialSendString(moving ? "MOVING servo=" : "OK servo=");
     serialSendUint(command.channel);
     serialSendString(moving ? " target=" : " angle=");
     serialSendUint(command.angle);
     if (moving) {
-        serialSendString(" speed=30dps\r\n");
+        serialSendString(" speed_dps10=");
+        serialSendUint(command.speedDps10);
+        serialSendString("\r\n");
     } else {
         serialSendString(" pulse=");
         serialSendUint(pulse);
@@ -741,11 +761,47 @@ static void imuInit(uint32_t baud)
 static void serviceMotion(void)
 {
     uint32_t elapsed, age, dt, edge;
+    uint32_t extId;
+    uint8_t dlc, function, status, checksum;
     float yaw, error, t;
     int16_t correction;
     uint16_t speed;
     if (!motionMode || emergencyStop) return;
     elapsed = clockMs - motionStart;
+    if (motionMode == 3U) {
+        extId = 0U;
+        dlc = function = status = checksum = 0U;
+        __disable_irq();
+        if (can.rxFrameFlag) {
+            extId = can.CAN_RxMsg.ExtId;
+            dlc = can.CAN_RxMsg.DLC;
+            if (dlc >= 3U) {
+                function = can.CAN_RxMsg.Data[0];
+                status = can.CAN_RxMsg.Data[1];
+                checksum = can.CAN_RxMsg.Data[dlc - 1U];
+            }
+            can.rxFrameFlag = false;
+        }
+        __enable_irq();
+        if (((extId >> 8) & 0xFFU) == auxMoveMotorId && dlc >= 3U &&
+            function == 0x3AU && checksum == 0x6BU && (status & 0x02U)) {
+            motionMode = 0U;
+            serialSendString("DONE: auxmove motor=");
+            serialSendUint(auxMoveMotorId);
+            serialSendString(" reached target\r\n");
+            return;
+        }
+        if (elapsed >= motionDuration) {
+            stopAllMotors();
+            serialSendString("ERR: auxmove status timeout; stopped\r\n");
+            return;
+        }
+        if (clockMs - lastControl >= AUX_MOVE_STATUS_POLL_MS) {
+            lastControl = clockMs;
+            Emm_V5_Read_Sys_Params(auxMoveMotorId, S_FLAG);
+        }
+        return;
+    }
     if (elapsed >= motionDuration) {
         stopAllMotors();
         serialSendString("STOP: test window elapsed (not measured distance)\r\n");
@@ -950,6 +1006,7 @@ void mechanismActionService(void)
 {
     const MechanismAction *action;
     uint16_t angle;
+    uint16_t speedDps10;
     if (!mechanismActionActive) return;
     if (mechanismActionDispatched && mechanismActionWaitUntil != 0U) {
         if ((int32_t)(clockMs - mechanismActionWaitUntil) < 0) return;
@@ -968,14 +1025,15 @@ void mechanismActionService(void)
         } else if (action->type == MECHANISM_ACTION_GRIPPER) {
             angle = action->value ? mechanismActionInitial->gripperOpenDeg :
                                     mechanismActionInitial->gripperCloseDeg;
-            servoSetTarget(2U, angle);
+            servoSetTarget(2U, angle, mechanismActionInitial->gripperDps10);
         } else if (action->type == MECHANISM_ACTION_PLATFORM) {
             if (action->value < 1U || action->value > 3U) {
                 mechanismActionActive = 0U;
                 return;
             }
             servoSetTarget(3U,
-                mechanismActionInitial->platformDeg[action->value - 1U]);
+                mechanismActionInitial->platformDeg[action->value - 1U],
+                mechanismActionInitial->platformDps10);
         } else if (action->type == MECHANISM_ACTION_SERVO) {
             if (action->channel < 2U || action->channel > 4U ||
                 (action->channel < 4U && action->value > 270U) ||
@@ -983,7 +1041,12 @@ void mechanismActionService(void)
                 mechanismActionActive = 0U;
                 return;
             }
-            servoSetTarget(action->channel, action->value);
+            speedDps10 = action->channel == 2U ?
+                mechanismActionInitial->gripperDps10 :
+                (action->channel == 3U ?
+                    mechanismActionInitial->platformDps10 :
+                    mechanismActionInitial->pose.turretDps10);
+            servoSetTarget(action->channel, action->value, speedDps10);
         } else if (action->type != MECHANISM_ACTION_WAIT) {
             mechanismActionActive = 0U;
             return;
@@ -1139,6 +1202,68 @@ static void startAuxMotorJog(uint8_t motorId, uint8_t direction)
     serialSendString(" direction ");
     serialSendString(direction == 0U ? "0" : "1");
     serialSendString(", auto-disarmed\r\n");
+}
+
+static uint8_t processAuxMoveCommand(const char *command)
+{
+    const char *cursor;
+    uint16_t motorId, rpm, accel;
+    int16_t distanceDmm;
+    int16_t maximumDmm;
+    uint32_t pulses;
+    uint8_t direction;
+
+    if (strncmp(command, "auxmove ", 8U) != 0) return 0U;
+    cursor = command + 8U;
+    if (!mechanismParseUnsigned(&cursor, &motorId) ||
+        !mechanismParseSigned(&cursor, &distanceDmm) ||
+        !mechanismParseUnsigned(&cursor, &rpm) ||
+        !mechanismParseUnsigned(&cursor, &accel) ||
+        !mechanismAtEnd(cursor)) {
+        serialSendString("ERR: auxmove 5|6 signed_dmm rpm accel\r\n");
+        return 1U;
+    }
+    if (motorId < AUX_MOTOR_MIN_ID || motorId > AUX_MOTOR_MAX_ID) {
+        serialSendString("ERR: auxmove motor 5|6\r\n");
+        return 1U;
+    }
+    maximumDmm = motorId == 5U ? 1350 : 1870;
+    if (distanceDmm == 0 || distanceDmm < -maximumDmm ||
+        distanceDmm > maximumDmm || rpm < MECHANISM_RPM_MIN ||
+        rpm > MECHANISM_RPM_MAX || accel < MECHANISM_ACCEL_MIN ||
+        accel > MECHANISM_ACCEL_MAX) {
+        serialSendString("ERR: auxmove distance/rpm/accel out of range\r\n");
+        return 1U;
+    }
+    if (!armed) {
+        serialSendString("ERR: send 'arm' first\r\n");
+        return 1U;
+    }
+    armed = 0U;
+    invalidateMechanism("manual_auxmove");
+    pulses = motorId == 5U ? mechanismLiftPulses(distanceDmm) :
+                             mechanismHorizontalPulses(distanceDmm);
+    direction = distanceDmm > 0 ? 0U : 1U;
+    Emm_V5_En_Control((uint8_t)motorId, true, false);
+    delay_ms(2U);
+    if (motionInterrupted()) {
+        stopAllMotors();
+        return 1U;
+    }
+    Emm_V5_Pos_Control((uint8_t)motorId, direction, rpm,
+                       (uint8_t)accel, pulses, false, false);
+    motionMode = 3U;
+    auxMoveMotorId = (uint8_t)motorId;
+    motionStart = clockMs;
+    lastControl = clockMs;
+    motionDuration = mechanismMotorDurationMs(pulses, rpm) * 2U +
+                     AUX_MOVE_TIMEOUT_MARGIN_MS;
+    serialSendString("TX queued: auxmove motor=");
+    serialSendUint(motorId);
+    serialSendString(" distance_dmm=");
+    serialSendInt(distanceDmm);
+    serialSendString(", auto-disarmed\r\n");
+    return 1U;
 }
 
 static void checkMotorCan(uint8_t motorId)
@@ -1770,6 +1895,7 @@ static void processCommand(const char *command)
         serialSendString("ERR: test busy; use stop or ! first\r\n");
         return;
     }
+    if (processAuxMoveCommand(command)) return;
     if (strncmp(command, "line ", 5U) == 0) {
         startLine(command + 5, 0U);
         return;
