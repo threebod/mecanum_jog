@@ -12,9 +12,16 @@
 #define ROUTE_LATERAL_SCALE 0.9f
 #define ROUTE_MM_PER_REV    314.159265f /* pi * 100 mm, direct drive G=1 */
 #define ROUTE_RPM           60
+#define ROUTE_LATERAL_RPM_MAX 30U
 #define ROUTE_ACCEL_RPM_S   120.0f
 #define ROUTE_TURN_RPM      30.0f
 #define ROUTE_TURN_ACCEL    90.0f
+/* Initial navigation heading PID gains; tune against measured IMU response. */
+#define ROUTE_HEADING_KP    2.0f
+#define ROUTE_HEADING_KI    0.25f
+#define ROUTE_HEADING_KD    0.12f
+#define ROUTE_HEADING_MAX_RPM 12.0f
+#define ROUTE_HEADING_INTEGRAL_LIMIT 12.0f
 #define ROUTE_COUNT         16U
 typedef struct { int16_t x, y; const char *event; int8_t heading; } RoutePoint;
 static const RoutePoint routeTemplate[ROUTE_COUNT] = {
@@ -32,6 +39,64 @@ static RoutePoint routePoint(uint8_t index, uint8_t start)
     return p;
 }
 static float routeAbs(float value) { return value < 0.0f ? -value : value; }
+typedef struct {
+    float integral;
+    float filteredRate;
+    float previousYaw;
+    uint32_t previousSampleMs;
+    uint8_t initialized;
+} RouteHeadingPid;
+typedef struct {
+    float kp;
+    float ki;
+    float kd;
+} RouteHeadingPidGains;
+static void routeHeadingPidReset(RouteHeadingPid *pid)
+{
+    pid->integral = pid->filteredRate = pid->previousYaw = 0.0f;
+    pid->previousSampleMs = 0U;
+    pid->initialized = 0U;
+}
+static float routeHeadingPidStep(RouteHeadingPid *pid,
+                                 const RouteHeadingPidGains *gains,
+                                 float error, float yaw, uint32_t sampleMs,
+                                 uint32_t dt, int8_t sign)
+{
+    float yawChange, sampleDt, candidate, proportional, output;
+    if (!pid->initialized) {
+        pid->previousYaw = yaw;
+        pid->previousSampleMs = sampleMs;
+        pid->initialized = 1U;
+    } else if (sampleMs != pid->previousSampleMs) {
+        sampleDt = (float)(sampleMs - pid->previousSampleMs);
+        yawChange = yaw - pid->previousYaw;
+        while (yawChange > 180.0f) yawChange -= 360.0f;
+        while (yawChange < -180.0f) yawChange += 360.0f;
+        pid->filteredRate += sampleDt / (100.0f + sampleDt) *
+            (yawChange * 1000.0f / sampleDt - pid->filteredRate);
+        pid->previousYaw = yaw;
+        pid->previousSampleMs = sampleMs;
+    }
+    proportional = routeAbs(error) < 0.6f ? 0.0f : error;
+    if (proportional != 0.0f && routeAbs(error) <= 8.0f) {
+        candidate = pid->integral + error * dt / 1000.0f;
+        if (candidate > ROUTE_HEADING_INTEGRAL_LIMIT)
+            candidate = ROUTE_HEADING_INTEGRAL_LIMIT;
+        if (candidate < -ROUTE_HEADING_INTEGRAL_LIMIT)
+            candidate = -ROUTE_HEADING_INTEGRAL_LIMIT;
+        output = gains->kp * proportional + gains->ki * candidate -
+                 gains->kd * pid->filteredRate;
+        if ((output <= ROUTE_HEADING_MAX_RPM && output >= -ROUTE_HEADING_MAX_RPM) ||
+            (output > ROUTE_HEADING_MAX_RPM && error < 0.0f) ||
+            (output < -ROUTE_HEADING_MAX_RPM && error > 0.0f))
+            pid->integral = candidate;
+    }
+    output = gains->kp * proportional + gains->ki * pid->integral -
+             gains->kd * pid->filteredRate;
+    if (output > ROUTE_HEADING_MAX_RPM) output = ROUTE_HEADING_MAX_RPM;
+    if (output < -ROUTE_HEADING_MAX_RPM) output = -ROUTE_HEADING_MAX_RPM;
+    return output * sign;
+}
 /* Convert map-axis RPM to body-axis RPM at a cardinal heading. */
 static void routeBody(int16_t mapUp, int16_t mapRight, int8_t heading,
                       int16_t *forward, int16_t *right)
@@ -56,11 +121,11 @@ static int16_t routeTurnSpeed(float error, int8_t sign)
     return routeTurnSpeedLimited(error, sign, (uint16_t)ROUTE_TURN_RPM);
 }
 /* Positive lateral means right. IDs: FR=1 FL=2 RL=3 RR=4.
- * Matches existing W/S/A/D sign table, conventional X roller layout. */
+ * A/B roller types are swapped at all four wheel positions. */
 static int16_t routeWheel(uint8_t id, int16_t forward, int16_t right,
                           int16_t turn, uint16_t trim)
 {
-    int32_t rpm = forward + ((id == 2U || id == 4U) ? right : -right)
+    int32_t rpm = forward + ((id == 1U || id == 3U) ? right : -right)
                            + ((id == 1U || id == 4U) ? turn : -turn);
     return (int16_t)(rpm * trim / 1000);
 }

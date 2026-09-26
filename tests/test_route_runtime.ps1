@@ -23,10 +23,15 @@ $prefix = @'
 static uint8_t routeActive,routeWaiting,routeIndex,routeStartZone,routeStep;
 static uint8_t routeAuto,routeRotating,routeOnlyTurn,routeTurnInBand,fullRouteRunning;
 static uint8_t motionMode,armed,imuValid=1,emergencyStop,jogCanFault;
+static struct {uint8_t running;} mechanismState;
+static uint8_t mechanismActionActive;
 static uint8_t auxMoveMotorId;
 static int8_t routeHeading,routeNextHeading,yawSign=1;
 static float routeX,routeY,routeYaw,routeBaseYaw,imuYaw;
 static float routeDriveRpm,routeTurnRpm,routeCorrection;
+static RouteHeadingPid routeHeadingPid;
+static RouteHeadingPidGains routeHeadingGains={
+    ROUTE_HEADING_KP,ROUTE_HEADING_KI,ROUTE_HEADING_KD};
 static uint16_t routeRpm=ROUTE_RPM;
 static float routeLateralScale=ROUTE_LATERAL_SCALE;
 static float routeForwardScale=ROUTE_FORWARD_SCALE;
@@ -83,6 +88,7 @@ static void stopAllMotors(void) {
     routeForward=routeRight=commandTurn=0; armed=0;
     navInitialized=navRunning=navPathCount=0;
     routeDriveRpm=routeTurnRpm=routeCorrection=0;routeSentValid=0;
+    routeHeadingPidReset(&routeHeadingPid);
     motionMode=0;straightSpeedState=straightTurnState=0;
 }
 static void Emm_V5_Vel_Control(uint8_t id,uint8_t dir,uint16_t rpm,uint8_t acc,bool sync) {
@@ -114,6 +120,19 @@ int main(void) {
     unsigned n,start,target; int sign;
     int16_t previous,peak;
     char cmd[32];
+    assert(processRouteCommand("pid get"));
+    assert(processRouteCommand("pid set 235 40 18") &&
+           routeAbs(routeHeadingGains.kp-2.35f)<0.001f &&
+           routeAbs(routeHeadingGains.ki-0.40f)<0.001f &&
+           routeAbs(routeHeadingGains.kd-0.18f)<0.001f);
+    routeActive=1;
+    assert(processRouteCommand("pid set 300 50 20") &&
+           routeAbs(routeHeadingGains.kp-2.35f)<0.001f);
+    routeActive=0;
+    assert(processRouteCommand("pid set 401 25 12") &&
+           routeAbs(routeHeadingGains.kp-2.35f)<0.001f);
+    assert(processRouteCommand("pid set 200 25 12") &&
+           routeAbs(routeHeadingGains.kp-ROUTE_HEADING_KP)<0.001f);
     assert(processRouteCommand("route scale 9250") &&
            routeAbs(routeLateralScale-0.925f)<0.0001f);
     routeActive=1;assert(processRouteCommand("route scale 8000") &&
@@ -131,6 +150,8 @@ int main(void) {
     sendRouteSpeeds(20,0,0);assert(batches==1 && writes==4);
     sendRouteSpeeds(20,0,0);assert(batches==1 && writes==4);
     sendRouteSpeeds(0,20,0);assert(batches==2 && writes==8);
+    assert(staged[0]==20 && staged[1]==-20 &&
+           staged[2]==20 && staged[3]==-20);
     sendRouteSpeeds(0,0,0);assert(batches==3 && writes==12);
     sendRouteSpeeds(0,0,0);assert(batches==3 && writes==12);
     for(sign=-1;sign<=1;sign+=2) for(start=1;start<=2;++start) {
@@ -145,9 +166,27 @@ int main(void) {
         assert(turnTicks>100);
         assert(routePosReports>0 && routeStageReports==8 && routeDoneReports==1);
     }
-    armed=1; assert(processRouteCommand("route step 1"));
-    for(n=0;n<1000 && !routeWaiting;++n) tick();
-    assert(routeWaiting && routeIndex==1);
+    stopAllMotors();imuYaw=0;imuStamp=clockMs;armed=1;
+    assert(processRouteCommand("route step 1"));
+    for(n=0;n<25;++n) tick();
+    for(n=0;n<10;++n) {
+        imuYaw=routeYaw+8;clockMs+=20;imuStamp=clockMs;serviceRoute();
+    }
+    assert(routeCorrection<0);
+    for(n=0;n<7;++n) {
+        imuYaw=routeYaw-8;clockMs+=20;imuStamp=clockMs;serviceRoute();
+    }
+    assert(routeCorrection>0); /* reverse promptly when yaw crosses target */
+    stopAllMotors();imuYaw=0;imuStamp=clockMs;armed=1;
+    assert(!routeHeadingPid.initialized && routeHeadingPid.integral==0);
+    assert(processRouteCommand("route step 1"));
+    peak=0;
+    for(n=0;n<1000 && !routeWaiting;++n) {
+        tick();
+        assert(routeAbs(routeRight)<=ROUTE_LATERAL_RPM_MAX);
+        if(routeAbs(routeRight)>peak) peak=(int16_t)routeAbs(routeRight);
+    }
+    assert(routeWaiting && routeIndex==1 && peak>0);
     assert(processRouteCommand("route next") && !routeWaiting);
     stopAllMotors(); tick(); assert(!routeActive); /* cancel cannot resume */
     assert(processRouteCommand("route next") && !routeActive);
@@ -192,6 +231,11 @@ int main(void) {
     navInvalidReports=0;clockMs+=20;imuStamp=clockMs-300;serviceRoute();
     assert(!navInitialized && !navRunning && navInvalidReports==1);
     assert(processNavCommand("nav goto 1200 1200") && !navRunning);
+    stopAllMotors();imuYaw=0;imuStamp=clockMs;imuValid=1;
+    assert(processNavCommand("nav init 1") && navInitialized);
+    armed=1;assert(processNavCommand("nav goto 2100 2250") && navRunning);
+    imuYaw=routeYaw+21;clockMs+=20;imuStamp=clockMs;serviceRoute();
+    assert(!navInitialized && !navRunning && navInvalidReports==2);
     stopAllMotors();imuStamp=clockMs;imuValid=1;
     assert(processNavCommand("nav init 1") && navInitialized);
     armed=1;assert(processNavCommand("nav goto 300 300 120") && navRunning);

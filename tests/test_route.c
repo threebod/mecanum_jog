@@ -39,6 +39,10 @@ int main(void)
     unsigned start, i, sample, events;
     float x, y;
     RoutePoint p;
+    RouteHeadingPid headingPid;
+    const RouteHeadingPidGains gains = {
+        ROUTE_HEADING_KP, ROUTE_HEADING_KI, ROUTE_HEADING_KD
+    };
     int16_t forward, right;
     int8_t heading;
     for (start = 1; start <= 2; ++start) {
@@ -63,10 +67,10 @@ int main(void)
     assert(routeWheel(2,20,0,0,1000) == 20);
     assert(routeWheel(3,20,0,0,1000) == 20);
     assert(routeWheel(4,20,0,0,1000) == 20);
-    assert(routeWheel(1,0,20,0,1000) == -20);
-    assert(routeWheel(2,0,20,0,1000) == 20);
-    assert(routeWheel(3,0,20,0,1000) == -20);
-    assert(routeWheel(4,0,20,0,1000) == 20);
+    assert(routeWheel(1,0,20,0,1000) == 20);
+    assert(routeWheel(2,0,20,0,1000) == -20);
+    assert(routeWheel(3,0,20,0,1000) == 20);
+    assert(routeWheel(4,0,20,0,1000) == -20);
     assert(routeWheel(1,0,0,5,1000) == 5);
     assert(routeWheel(2,0,0,5,1000) == -5);
     assert(routeWheel(3,0,0,5,1000) == -5);
@@ -77,6 +81,21 @@ int main(void)
     assert(routeAbs(routeEstimateScaled(-60,1000,0.925f)+
                     314.159265f*0.925f) < 0.001f);
     assert(routeAbs(ROUTE_LATERAL_SCALE-0.9f) < 0.0001f);
+    assert(ROUTE_LATERAL_RPM_MAX == 30U);
+    routeHeadingPidReset(&headingPid);
+    assert(routeHeadingPidStep(&headingPid, &gains, 0, 179, 100, 20, 1) == 0);
+    assert(routeHeadingPidStep(&headingPid, &gains, -2, -179, 200, 20, 1) < -4);
+    routeHeadingPidReset(&headingPid);
+    for (i = 0; i < 100; ++i)
+        assert(routeHeadingPidStep(&headingPid, &gains, 20, 0, i * 20, 20, 1) == 12);
+    assert(headingPid.integral == 0); /* no windup while saturated */
+    routeHeadingPidReset(&headingPid);
+    assert(routeHeadingPidStep(&headingPid, &gains, 5, 0, 100, 100, 1) > 10);
+    assert(routeHeadingPidStep(&headingPid, &gains, 4, 1, 200, 100, 1) < 8);
+    assert(headingPid.integral > 0);
+    assert(routeHeadingPidStep(&headingPid, &gains, 4, 1, 200, 20, -1) < 0);
+    routeHeadingPidReset(&headingPid);
+    assert(headingPid.integral == 0 && !headingPid.initialized);
     assert(routeSpeed(1000,1000,120) == 120);
     assert(routeSpeed(5,1000,120) < routeSpeed(100,1000,120));
     routeBody(20,0,1,&forward,&right); assert(forward==0 && right==20);

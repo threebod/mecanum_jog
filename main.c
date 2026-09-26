@@ -57,8 +57,8 @@ typedef struct {
 static const uint8_t motorDirections[4][5] = {
     {1U, 1U, 0U, 0U, 1U},
     {0U, 0U, 1U, 1U, 0U},
-    {1U, 1U, 1U, 0U, 0U},
-    {0U, 0U, 0U, 1U, 1U}
+    {0U, 0U, 0U, 1U, 1U},
+    {1U, 1U, 1U, 0U, 0U}
 };
 
 static volatile char rxLine[RX_LINE_SIZE];
@@ -109,6 +109,10 @@ static NavPoint navPath[NAV_PATH_CAPACITY];
 static uint8_t navPathCount;
 static uint32_t navLastReport, routeLastReport;
 static float routeDriveRpm, routeTurnRpm, routeCorrection;
+static RouteHeadingPid routeHeadingPid;
+static RouteHeadingPidGains routeHeadingGains = {
+    ROUTE_HEADING_KP, ROUTE_HEADING_KI, ROUTE_HEADING_KD
+};
 static uint16_t routeRpm = ROUTE_RPM;
 static float routeForwardScale = ROUTE_FORWARD_SCALE;
 static float routeLateralScale = ROUTE_LATERAL_SCALE;
@@ -279,6 +283,7 @@ static void stopAllMotors(void)
     routeWaiting = 0U;
     routeRotating = routeOnlyTurn = routeTurnInBand = 0U;
     routeDriveRpm = routeTurnRpm = routeCorrection = 0.0f;
+    routeHeadingPidReset(&routeHeadingPid);
     routeSentValid = 0U;
     straightSpeedState = straightTurnState = 0.0f;
     routeForward = routeRight = 0;
@@ -342,6 +347,8 @@ static void printHelp(void)
     serialSendString("  nav init 1|2       set estimated start pose; fresh IMU, idle\r\n");
     serialSendString("  nav goto X Y [rpm] safe-corridor target; rpm 10..120 (arm)\r\n");
     serialSendString("  nav status         estimated navigation state\r\n");
+    serialSendString("  pid get            read navigation heading PID (x100)\r\n");
+    serialSendString("  pid set KP KI KD   set RAM gains while stopped (x100)\r\n");
     serialSendString("  mech init H L T     set manual mechanism pose (0.1mm/0.1deg)\r\n");
     serialSendString("  mech pose H L T HR HA LR LA TS  move estimated pose (arm)\r\n");
     serialSendString("  mech status         estimated mechanism state\r\n");
@@ -1371,6 +1378,17 @@ static void sendRouteSpeeds(int16_t forward, int16_t right, int16_t turn)
     }
 }
 
+static void printHeadingPidStatus(void)
+{
+    serialSendString("PID kp_x100=");
+    serialSendUint((uint16_t)(routeHeadingGains.kp * 100.0f + 0.5f));
+    serialSendString(" ki_x100=");
+    serialSendUint((uint16_t)(routeHeadingGains.ki * 100.0f + 0.5f));
+    serialSendString(" kd_x100=");
+    serialSendUint((uint16_t)(routeHeadingGains.kd * 100.0f + 0.5f));
+    serialSendString(" RAM_only\r\n");
+}
+
 static int16_t navFieldYawCdeg(void)
 {
     float fieldYaw = 90.0f + headingError(imuYaw, routeBaseYaw) * yawSign;
@@ -1469,6 +1487,7 @@ static void finishNavigation(void)
     routeActive = 0U;
     routeWaiting = 0U;
     routeRotating = routeOnlyTurn = routeTurnInBand = 0U;
+    routeHeadingPidReset(&routeHeadingPid);
     routeForward = routeRight = 0;
     navRunning = 0U;
     navCurrentNode = navNodeAt(target.x, target.y);
@@ -1486,10 +1505,12 @@ static void finishNavigation(void)
 
 static void serviceRoute(void)
 {
-    uint32_t now, dt, age;
+    uint32_t now, dt, age, sampleMs;
     RoutePoint p;
     float yaw, error, dx, dy, remaining;
     int16_t speed, turn, bodyForward, bodyRight;
+    float pidTurn;
+    uint16_t cruiseRpm;
     uint8_t lateral;
     if (!routeActive || motionInterrupted()) return;
     now = clockMs;
@@ -1497,7 +1518,7 @@ static void serviceRoute(void)
     dt = now - routeTick;
     if (dt < 20U) return;
     __disable_irq();
-    yaw = imuYaw; age = clockMs - imuStamp;
+    yaw = imuYaw; sampleMs = imuStamp; age = clockMs - sampleMs;
     __enable_irq();
     error = headingError(routeYaw, yaw);
     if (!imuValid || age > 250U || (!routeRotating && routeAbs(error) > 20.0f) || dt > 150U ||
@@ -1547,6 +1568,7 @@ static void serviceRoute(void)
                 routeRotating = routeTurnInBand = 0U;
                 routeHeading = routeNextHeading;
                 routeLegStart = now;
+                routeHeadingPidReset(&routeHeadingPid);
                 if (routeOnlyTurn) {
                     stopAllMotors(); serialSendString("TURN DONE (2deg entry / 3.5deg hysteresis)\r\n");
                 }
@@ -1584,6 +1606,7 @@ static void serviceRoute(void)
         if (motionInterrupted()) return;
         routeForward = routeRight = 0;
         routeDriveRpm = routeTurnRpm = routeCorrection = 0.0f;
+        routeHeadingPidReset(&routeHeadingPid);
         routeX = p.x; routeY = p.y; /* snap NOMINAL coordinates only */
         if (p.heading != 4 && p.heading != routeHeading) {
             routeNextHeading = p.heading;
@@ -1626,14 +1649,17 @@ static void serviceRoute(void)
     /* Map-axis translation is transformed to the current body heading. */
     lateral = routeAbs(dx) > 1.5f;
     remaining = lateral ? routeAbs(dx) : routeAbs(dy);
-    speed = routeSpeed(remaining, now - routeLegStart, routeRpm);
+    cruiseRpm = lateral && routeRpm > ROUTE_LATERAL_RPM_MAX ?
+        ROUTE_LATERAL_RPM_MAX : routeRpm;
+    speed = routeSpeed(remaining, now - routeLegStart, cruiseRpm);
     routeDriveRpm = routeSlew(routeDriveRpm, speed, ROUTE_ACCEL_RPM_S, dt);
     speed = routeRound(routeDriveRpm);
     routeRight = lateral ? (dx > 0 ? speed : -speed) : 0;
     routeForward = lateral ? 0 : (dy > 0 ? speed : -speed);
-    turn = routeAbs(error) < 0.6f ? 0 : headingCorrection(error, yawSign);
+    pidTurn = routeHeadingPidStep(&routeHeadingPid, &routeHeadingGains, error,
+                                  yaw, sampleMs, dt, yawSign);
     routeCorrection = routeSlew(routeCorrection,
-        (float)turn * speed / routeRpm, 30.0f, dt);
+        pidTurn * speed / cruiseRpm, 90.0f, dt);
     turn = routeRound(routeCorrection);
     routeBody(routeForward, routeRight, routeHeading, &bodyForward, &bodyRight);
     sendRouteSpeeds(bodyForward, bodyRight, turn);
@@ -1731,6 +1757,7 @@ static uint8_t processNavCommand(const char *command)
     routeIndex = 0U;
     routeForward = routeRight = 0;
     routeDriveRpm = routeTurnRpm = routeCorrection = 0.0f;
+    routeHeadingPidReset(&routeHeadingPid);
     routeSentValid = 0U;
     setAllMotorsEnabled(true);
     if (motionInterrupted()) {
@@ -1748,8 +1775,33 @@ static uint8_t processNavCommand(const char *command)
 static uint8_t processRouteCommand(const char *command)
 {
     uint8_t start, step, autoRun;
-    uint16_t degrees, rpm, forwardBp, lateralBp;
+    uint16_t degrees, rpm, forwardBp, lateralBp, kp100, ki100, kd100;
     const char *cursor;
+    if (strcmp(command, "pid get") == 0) {
+        printHeadingPidStatus();
+        return 1U;
+    }
+    if (strncmp(command, "pid set ", 8U) == 0) {
+        cursor = command + 8U;
+        if (!parseUint(&cursor, &kp100) || !parseUint(&cursor, &ki100) ||
+            !parseUint(&cursor, &kd100) || *cursor != '\0' ||
+            kp100 < 50U || kp100 > 400U || ki100 > 100U || kd100 > 100U) {
+            serialSendString("ERR PID: set KP KI KD (x100); KP 50..400, KI/KD 0..100\r\n");
+            return 1U;
+        }
+        if (motionMode || routeActive || mechanismState.running ||
+            mechanismActionActive) {
+            serialSendString("ERR PID: stop motion before tuning\r\n");
+            return 1U;
+        }
+        routeHeadingGains.kp = kp100 / 100.0f;
+        routeHeadingGains.ki = ki100 / 100.0f;
+        routeHeadingGains.kd = kd100 / 100.0f;
+        routeHeadingPidReset(&routeHeadingPid);
+        serialSendString("OK PID RAM_only\r\n");
+        printHeadingPidStatus();
+        return 1U;
+    }
     if (strcmp(command, "route status") == 0) { printRouteStatus(); return 1U; }
     if (strncmp(command, "route tune ", 11U) == 0) {
         cursor = command + 11U;
@@ -1806,6 +1858,7 @@ static uint8_t processRouteCommand(const char *command)
         if (motionInterrupted()) { stopAllMotors(); return 1U; }
         routeForward = routeRight = 0;
         routeDriveRpm = routeTurnRpm = routeCorrection = 0.0f;
+        routeHeadingPidReset(&routeHeadingPid);
         routeSentValid = 0U;
         routeTick = routeTurnStart = routeLegStart = clockMs;
         routeWaiting = routeTurnInBand = 0U;
@@ -1851,6 +1904,7 @@ static uint8_t processRouteCommand(const char *command)
     routeAuto = autoRun; fullRouteRunning = autoRun;
     routeHeading = routeNextHeading = 0;
     routeDriveRpm = routeTurnRpm = routeCorrection = 0.0f;
+    routeHeadingPidReset(&routeHeadingPid);
     routeSentValid = 0U;
     routeRotating = routeOnlyTurn = routeTurnInBand = 0U;
     routeStartZone = start; routeStep = step; routeIndex = 0U;
