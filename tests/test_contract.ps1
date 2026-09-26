@@ -5,8 +5,10 @@ $mainPath = Join-Path $exampleRoot 'main.c'
 $projectPath = Join-Path $exampleRoot 'MecanumJog.uvprojx'
 $readmePath = Join-Path $exampleRoot 'README.md'
 $navigationPath = Join-Path $exampleRoot 'map_navigation.h'
+$sensorPath = Join-Path $exampleRoot 'hwt101.c'
+$canPath = Join-Path $exampleRoot 'jog_can_diagnostics.c'
 
-foreach ($path in @($mainPath, $projectPath, $readmePath, $navigationPath)) {
+foreach ($path in @($mainPath, $projectPath, $readmePath, $navigationPath, $sensorPath, $canPath)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Missing required file: $path"
     }
@@ -14,6 +16,8 @@ foreach ($path in @($mainPath, $projectPath, $readmePath, $navigationPath)) {
 
 $main = Get-Content -LiteralPath $mainPath -Raw
 $project = Get-Content -LiteralPath $projectPath -Raw
+$sensor = Get-Content -LiteralPath $sensorPath -Raw
+$canSource = Get-Content -LiteralPath $canPath -Raw
 
 $requiredMainPatterns = @(
     '#define COMMAND_BAUD_RATE\s+115200U',
@@ -23,7 +27,6 @@ $requiredMainPatterns = @(
     '#define MOTOR_TEST_PULSES\s+160U',
     '#define AUX_MOTOR_MIN_ID\s+5U',
     '#define AUX_MOTOR_MAX_ID\s+6U',
-    '#define CAN_CHECK_TIMEOUT_MS\s+300U',
     '#define AUX_MOVE_STATUS_POLL_MS\s+50U',
     '#define AUX_MOVE_TIMEOUT_MARGIN_MS\s+3000U',
     '#define HOST_HEARTBEAT_TIMEOUT_MS\s+1000U',
@@ -52,7 +55,7 @@ $requiredMainPatterns = @(
     '(?s)static void processCommand\(const char \*command\).*?processAuxMoveCommand\(command\)',
     '(?s)strncmp\(command, "motor ", 6U\) == 0.*?id < AUX_MOTOR_MIN_ID.*?id > AUX_MOTOR_MAX_ID.*?startAuxMotorJog',
     '(?s)if \(wheel\).*?Emm_V5_En_Control\(\(uint8_t\)id, true, false\).*?Emm_V5_Pos_Control',
-    '(?s)static void checkMotorCan\(uint8_t motorId\).*?can\.rxFrameFlag = false;.*?Emm_V5_Read_Sys_Params\(motorId, S_FLAG\).*?CAN_CHECK_TIMEOUT_MS',
+    '(?s)static void checkMotorCan\(uint8_t motorId\).*?jogCanReadStatus\(motorId, &emergencyStop, &reply\)',
     'CAN RX motor ',
     ' no CAN reply; ESR=',
     'CAN1->ESR',
@@ -92,6 +95,17 @@ $requiredMainPatterns = @(
 foreach ($pattern in $requiredMainPatterns) {
     if ($main -notmatch $pattern) {
         throw "main.c does not satisfy contract pattern: $pattern"
+    }
+}
+
+foreach ($check in @(
+    @{ Source = $sensor; Pattern = 'void USART2_IRQHandler\(void\)' },
+    @{ Source = $sensor; Pattern = 'void hwt101Init\(uint32_t baud\)' },
+    @{ Source = $canSource; Pattern = '#define CAN_CHECK_TIMEOUT_MS\s+300U' },
+    @{ Source = $canSource; Pattern = 'uint8_t jogCanReadStatus\(' }
+)) {
+    if ($check.Source -notmatch $check.Pattern) {
+        throw "Missing extracted module pattern: $($check.Pattern)"
     }
 }
 

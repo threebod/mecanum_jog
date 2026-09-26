@@ -8,6 +8,8 @@
 #include "route_plan.h"
 #include "map_navigation.h"
 #include "mechanism_action.h"
+#include "hwt101.h"
+#include "jog_can.h"
 
 #define COMMAND_BAUD_RATE  115200U
 #define RX_LINE_SIZE       80U
@@ -19,7 +21,6 @@
 #define MOTOR_TEST_SPEED   30U
 #define MOTOR_TEST_ACCEL   50U
 #define MOTOR_TEST_PULSES  160U
-#define CAN_CHECK_TIMEOUT_MS  300U
 #define AUX_MOVE_STATUS_POLL_MS  50U
 #define AUX_MOVE_TIMEOUT_MARGIN_MS  3000U
 #define HOST_HEARTBEAT_TIMEOUT_MS  1000U
@@ -76,13 +77,9 @@ static volatile uint32_t servoStepMdeg[3] = {
     SERVO_STEP_MDEG, SERVO_STEP_MDEG, SERVO_STEP_MDEG
 };
 extern volatile uint8_t jogCanFault;
-static volatile uint32_t clockMs;
+volatile uint32_t clockMs;
 static uint8_t hostHeartbeatActive;
 static uint32_t hostHeartbeatStamp;
-static volatile float imuYaw;
-static volatile uint32_t imuStamp;
-static volatile uint8_t imuValid;
-static uint8_t imuFrame[11], imuLength;
 static uint8_t motorInvert[5];
 static uint16_t motorTrim[5] = {1000U, 1000U, 1000U, 1000U, 1000U};
 static int8_t yawSign = 1;
@@ -711,60 +708,6 @@ static void clockInit(void)
     TIM_Cmd(TIM7, ENABLE);
 }
 
-void USART2_IRQHandler(void)
-{
-    uint8_t byte, i;
-    float yaw;
-    if (USART_GetITStatus(USART2, USART_IT_RXNE) == RESET) return;
-    byte = (uint8_t)USART_ReceiveData(USART2);
-    if (imuLength == 0U && byte != 0x55U) return;
-    imuFrame[imuLength++] = byte;
-    if (imuLength < 11U) return;
-    if (decodeYaw(imuFrame, &yaw)) {
-        imuYaw = yaw;
-        imuStamp = clockMs;
-        imuValid = 1U;
-        imuLength = 0U;
-    } else {
-        /* Sliding window recovers after a dropped byte or another frame type. */
-        for (i = 1U; i < 11U; ++i) imuFrame[i - 1U] = imuFrame[i];
-        imuLength = 10U;
-    }
-}
-
-static void imuInit(uint32_t baud)
-{
-    GPIO_InitTypeDef gpio;
-    USART_InitTypeDef uart;
-    NVIC_InitTypeDef nvic;
-    RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOD, ENABLE);
-    RCC_APB1PeriphClockCmd(RCC_APB1Periph_USART2, ENABLE);
-    USART_ITConfig(USART2, USART_IT_RXNE, DISABLE);
-    USART_Cmd(USART2, DISABLE);
-    imuValid = 0U;
-    imuLength = 0U;
-    GPIO_StructInit(&gpio);
-    gpio.GPIO_Pin = GPIO_Pin_5 | GPIO_Pin_6;
-    gpio.GPIO_Mode = GPIO_Mode_AF;
-    gpio.GPIO_PuPd = GPIO_PuPd_UP;
-    GPIO_Init(GPIOD, &gpio);
-    GPIO_PinAFConfig(GPIOD, GPIO_PinSource5, GPIO_AF_USART2);
-    GPIO_PinAFConfig(GPIOD, GPIO_PinSource6, GPIO_AF_USART2);
-    USART_StructInit(&uart);
-    uart.USART_BaudRate = baud;
-    uart.USART_Mode = USART_Mode_Rx | USART_Mode_Tx;
-    USART_Init(USART2, &uart);
-    nvic.NVIC_IRQChannel = USART2_IRQn;
-    nvic.NVIC_IRQChannelPreemptionPriority = 1U;
-    nvic.NVIC_IRQChannelSubPriority = 0U;
-    nvic.NVIC_IRQChannelCmd = ENABLE;
-    NVIC_Init(&nvic);
-    (void)USART2->SR;
-    (void)USART2->DR;
-    USART_Cmd(USART2, ENABLE);
-    USART_ITConfig(USART2, USART_IT_RXNE, ENABLE);
-}
-
 static void serviceMotion(void)
 {
     uint32_t elapsed, age, dt, edge;
@@ -1275,54 +1218,22 @@ static uint8_t processAuxMoveCommand(const char *command)
 
 static void checkMotorCan(uint8_t motorId)
 {
-    uint32_t elapsed;
-    uint32_t extId = 0U;
-    uint8_t dlc = 0U;
-    uint8_t data[8] = {0U};
+    JogCanReply reply;
+    uint8_t result;
     uint8_t i;
-    uint8_t received = 0U;
+    result = jogCanReadStatus(motorId, &emergencyStop, &reply);
+    if (result == 0U) return;
 
-    __disable_irq();
-    can.rxFrameFlag = false;
-    __enable_irq();
-    Emm_V5_Read_Sys_Params(motorId, S_FLAG);
-
-    for (elapsed = 0U; elapsed < CAN_CHECK_TIMEOUT_MS; ++elapsed) {
-        if (motionInterrupted()) {
-            return;
-        }
-        if (can.rxFrameFlag) {
-            __disable_irq();
-            extId = can.CAN_RxMsg.ExtId;
-            dlc = can.CAN_RxMsg.DLC;
-            if (dlc > 8U) {
-                dlc = 8U;
-            }
-            for (i = 0U; i < dlc; ++i) {
-                data[i] = can.CAN_RxMsg.Data[i];
-            }
-            can.rxFrameFlag = false;
-            __enable_irq();
-
-            if (((extId >> 8) & 0xFFU) == motorId && dlc >= 3U &&
-                data[0] == 0x3AU && data[dlc - 1U] == 0x6BU) {
-                received = 1U;
-                break;
-            }
-        }
-        delay_ms(1U);
-    }
-
-    if (received) {
+    if (result == 1U) {
         serialSendString("CAN RX motor ");
         serialSendUint(motorId);
         serialSendString(": ExtId=0x");
-        serialSendHex32(extId);
+        serialSendHex32(reply.extId);
         serialSendString(" DLC=0x");
-        serialSendHex8(dlc);
+        serialSendHex8(reply.dlc);
         serialSendString(" DATA=");
-        for (i = 0U; i < dlc; ++i) {
-            serialSendHex8(data[i]);
+        for (i = 0U; i < reply.dlc; ++i) {
+            serialSendHex8(reply.data[i]);
             serialSendChar(' ');
         }
         serialSendString("\r\n");
@@ -1978,7 +1889,7 @@ static void processCommand(const char *command)
     }
     if (strcmp(command, "imu 9600") == 0 || strcmp(command, "imu 115200") == 0) {
         invalidateNavigation("imu_reconfigured");
-        imuInit(strcmp(command, "imu 9600") == 0 ? 9600U : 115200U);
+        hwt101Init(strcmp(command, "imu 9600") == 0 ? 9600U : 115200U);
         serialSendString("IMU receiver configured; sensor settings unchanged\r\n");
         return;
     }
@@ -2100,7 +2011,7 @@ int main(void)
     board_init();
     clockInit();
     serialInit();
-    imuInit(115200U);
+    hwt101Init(115200U);
 
     mechanismStateReset(&mechanismState);
     stopAllMotors();
