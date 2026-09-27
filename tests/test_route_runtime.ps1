@@ -165,8 +165,8 @@ int main(void) {
     sendRouteSpeeds(20,0,0);assert(batches==1 && writes==4);
     sendRouteSpeeds(20,0,0);assert(batches==1 && writes==4);
     sendRouteSpeeds(0,20,0);assert(batches==2 && writes==8);
-    assert(staged[0]==20 && staged[1]==-20 &&
-           staged[2]==20 && staged[3]==-20);
+    assert(staged[0]==-20 && staged[1]==20 &&
+           staged[2]==-20 && staged[3]==20);
     sendRouteSpeeds(0,0,0);assert(batches==3 && writes==12);
     sendRouteSpeeds(0,0,0);assert(batches==3 && writes==12);
     for(sign=-1;sign<=1;sign+=2) for(start=1;start<=2;++start) {

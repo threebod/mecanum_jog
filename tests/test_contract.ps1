@@ -90,7 +90,7 @@ $requiredMainPatterns = @(
     'RCC_APB1PeriphClockCmd\(RCC_APB1Periph_TIM2, ENABLE\)',
     'GPIO_PinAFConfig\(GPIOA, pinSource, GPIO_AF_TIM2\)',
     'TIM_ITConfig\(TIM2, TIM_IT_Update, ENABLE\)',
-    '(?s)static const uint8_t motorDirections\[4\]\[5\] = \{\s*\{1U, 1U, 0U, 0U, 1U\},\s*\{0U, 0U, 1U, 1U, 0U\},\s*\{0U, 0U, 0U, 1U, 1U\},\s*\{1U, 1U, 1U, 0U, 0U\}'
+    '(?s)static const uint8_t motorDirections\[4\]\[5\] = \{\s*\{1U, 1U, 0U, 0U, 1U\},\s*\{0U, 0U, 1U, 1U, 0U\},\s*\{1U, 1U, 1U, 0U, 0U\},\s*\{0U, 0U, 0U, 1U, 1U\}'
 )
 
 foreach ($pattern in $requiredMainPatterns) {

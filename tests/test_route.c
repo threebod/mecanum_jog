@@ -67,10 +67,10 @@ int main(void)
     assert(routeWheel(2,20,0,0,1000) == 20);
     assert(routeWheel(3,20,0,0,1000) == 20);
     assert(routeWheel(4,20,0,0,1000) == 20);
-    assert(routeWheel(1,0,20,0,1000) == 20);
-    assert(routeWheel(2,0,20,0,1000) == -20);
-    assert(routeWheel(3,0,20,0,1000) == 20);
-    assert(routeWheel(4,0,20,0,1000) == -20);
+    assert(routeWheel(1,0,20,0,1000) == -20);
+    assert(routeWheel(2,0,20,0,1000) == 20);
+    assert(routeWheel(3,0,20,0,1000) == -20);
+    assert(routeWheel(4,0,20,0,1000) == 20);
     assert(routeWheel(1,0,0,5,1000) == 5);
     assert(routeWheel(2,0,0,5,1000) == -5);
     assert(routeWheel(3,0,0,5,1000) == -5);

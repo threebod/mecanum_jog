@@ -121,11 +121,11 @@ static int16_t routeTurnSpeed(float error, int8_t sign)
     return routeTurnSpeedLimited(error, sign, (uint16_t)ROUTE_TURN_RPM);
 }
 /* Positive lateral means right. IDs: FR=1 FL=2 RL=3 RR=4.
- * A/B roller types are swapped at all four wheel positions. */
+ * X roller layout, matching the verified chassis_position mapping. */
 static int16_t routeWheel(uint8_t id, int16_t forward, int16_t right,
                           int16_t turn, uint16_t trim)
 {
-    int32_t rpm = forward + ((id == 1U || id == 3U) ? right : -right)
+    int32_t rpm = forward + ((id == 1U || id == 3U) ? -right : right)
                            + ((id == 1U || id == 4U) ? turn : -turn);
     return (int16_t)(rpm * trim / 1000);
 }

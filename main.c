@@ -58,8 +58,8 @@ typedef struct {
 static const uint8_t motorDirections[4][5] = {
     {1U, 1U, 0U, 0U, 1U},
     {0U, 0U, 1U, 1U, 0U},
-    {0U, 0U, 0U, 1U, 1U},
-    {1U, 1U, 1U, 0U, 0U}
+    {1U, 1U, 1U, 0U, 0U},
+    {0U, 0U, 0U, 1U, 1U}
 };
 
 static volatile char rxLine[RX_LINE_SIZE];
