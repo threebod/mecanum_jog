@@ -45,6 +45,7 @@ static uint16_t motorTrim[5]={1000,1000,1000,1000,1000};
 static unsigned batches, writes;
 static unsigned statusReads;
 static uint8_t straightLateral;
+static uint8_t straightUseRoutePid;
 static float straightSpeedState,straightTurnState,targetYaw;
 static uint32_t motionStart,motionDuration,lastControl;
 static uint16_t straightRpm;
@@ -92,7 +93,7 @@ static void stopAllMotors(void) {
     navInitialized=navRunning=navPathCount=0;
     routeDriveRpm=routeTurnRpm=routeCorrection=0;routeSentValid=0;
     routeHeadingPidReset(&routeHeadingPid);
-    motionMode=0;straightSpeedState=straightTurnState=0;
+    motionMode=0;straightUseRoutePid=0;straightSpeedState=straightTurnState=0;
 }
 static void Emm_V5_Vel_Control(uint8_t id,uint8_t dir,uint16_t rpm,uint8_t acc,bool sync) {
     (void)acc;assert(sync);++writes;
@@ -268,6 +269,13 @@ int main(void) {
         }
         assert(!motionMode && peak==60);
     }
+    stopAllMotors();straightUseRoutePid=straightLateral=1;straightDirection=-1;
+    straightRpm=20;motionDuration=2000;motionStart=clockMs;lastControl=clockMs-20;
+    targetYaw=0;imuYaw=3;motionMode=2;pidTraceReports=0;
+    for(n=0;n<50;++n) {clockMs+=20;imuStamp=clockMs;serviceMotion();}
+    assert(motionMode==2 && routeHeadingPid.initialized &&
+           commandTurn<0 && pidTraceReports>0);
+    stopAllMotors();assert(!straightUseRoutePid && !routeHeadingPid.initialized);
     n=statusReads;motionMode=3;auxMoveMotorId=5;motionStart=lastControl=clockMs;motionDuration=1000;
     clockMs+=50;serviceMotion();assert(motionMode==3 && statusReads==n+1);
     can.CAN_RxMsg.ExtId=5U<<8;can.CAN_RxMsg.DLC=3;

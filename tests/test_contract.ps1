@@ -43,6 +43,7 @@ $requiredMainPatterns = @(
     '(?s)static void serviceHostWatchdog\(void\).*?hostHeartbeatActive = 0U;.*?stopServoMotion\(\);.*?stopAllMotors\(\);.*?ERR: host heartbeat timeout; stopped',
     '(?s)static void processCommand\(const char \*command\).*?strcmp\(command, "hb"\) == 0.*?hostHeartbeatActive = 1U;.*?hostHeartbeatStamp = clockMs;.*?return;.*?processRouteCommand\(command\)',
     '(?s)for \(;;\).*?serviceHostWatchdog\(\);.*?serviceMotion\(\);',
+    '(?s)strncmp\(command, "pid move ", 9U\) == 0.*?startLine\(command \+ 9, 2U\)',
     "received == '!'",
     'else if \(!emergencyStop &&',
     '(?s)if \(emergencyStop\)\s*\{.*?stopServoMotion\(\);.*?stopAllMotors\(\);.*?__disable_irq\(\);.*?emergencyStop = 0U;',

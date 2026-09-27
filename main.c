@@ -118,8 +118,10 @@ static uint16_t routeTurnRpmLimit = (uint16_t)ROUTE_TURN_RPM;
 static int16_t routeSent[4];
 static uint8_t routeSentValid;
 static uint8_t straightLateral;
+static uint8_t straightUseRoutePid;
 static float straightSpeedState, straightTurnState;
 static void sendRouteSpeeds(int16_t forward, int16_t right, int16_t turn);
+static void printHeadingPidTrace(float targetYaw, float actualYaw, int16_t turn);
 static void serialSendString(const char *text);
 static MechanismState mechanismState;
 static const MechanismInitialState *mechanismActionInitial;
@@ -276,6 +278,7 @@ static void stopAllMotors(void)
     invalidateMechanism("stopped");
     mechanismActionActive = 0U;
     motionMode = 0U;
+    straightUseRoutePid = 0U;
     routeActive = 0U;
     fullRouteRunning = 0U;
     routeWaiting = 0U;
@@ -328,6 +331,7 @@ static void printHelp(void)
     serialSendString("  help      show this help\r\n");
     serialSendString("  line W 100 30   synced forward 100mm at 30rpm (arm)\r\n");
     serialSendString("  straight W 2000 30  IMU heading hold, 2000ms (arm)\r\n");
+    serialSendString("  pid move A|D 2000 20  lateral heading PID test, 1000..5000ms, 10..30rpm (arm)\r\n");
     serialSendString("  line: W/S, 100..500mm step 100; straight: W/S/A/D; 10..120rpm\r\n");
     serialSendString("  wheel 1 0      single wheel 1..4, raw dir 0/1 (arm)\r\n");
     serialSendString("  invert 1 1     reverse wheel 1..4 mapping, 0/1\r\n");
@@ -711,10 +715,10 @@ static void clockInit(void)
 
 static void serviceMotion(void)
 {
-    uint32_t elapsed, age, dt, edge;
+    uint32_t elapsed, age, dt, edge, sampleMs;
     uint32_t extId;
     uint8_t dlc, function, status, checksum;
-    float yaw, error, t;
+    float yaw, error, t, targetCorrection;
     int16_t correction;
     uint16_t speed;
     if (!motionMode || emergencyStop) return;
@@ -763,7 +767,8 @@ static void serviceMotion(void)
     lastControl = clockMs;
     __disable_irq();
     yaw = imuYaw;
-    age = clockMs - imuStamp;
+    sampleMs = imuStamp;
+    age = clockMs - sampleMs;
     __enable_irq();
     error = headingError(targetYaw, yaw);
     if (!imuValid || age > 250U || dt > 150U || error > 20.0f || error < -20.0f) {
@@ -776,12 +781,21 @@ static void serviceMotion(void)
     straightSpeedState = routeSlew(straightSpeedState,
         straightRpm * t * t * (3.0f - 2.0f * t), ROUTE_ACCEL_RPM_S, dt);
     speed = (uint16_t)routeRound(straightSpeedState);
-    correction = routeAbs(error) < 0.6f ? 0 : headingCorrection(error, yawSign);
+    targetCorrection = straightUseRoutePid ?
+        routeHeadingPidStep(&routeHeadingPid, &routeHeadingGains,
+                            error, yaw, sampleMs, dt, yawSign) :
+        (float)(routeAbs(error) < 0.6f ? 0 : headingCorrection(error, yawSign));
     straightTurnState = routeSlew(straightTurnState,
-        (float)correction * speed / straightRpm, 30.0f, dt);
+        targetCorrection * speed / straightRpm,
+        straightUseRoutePid ? 90.0f : 30.0f, dt);
     correction = routeRound(straightTurnState);
     sendRouteSpeeds(straightLateral ? 0 : (int16_t)(straightDirection * speed),
         straightLateral ? (int16_t)(straightDirection * speed) : 0, correction);
+    if (straightUseRoutePid && !motionInterrupted() &&
+        clockMs - headingPidLastReport >= 200U) {
+        headingPidLastReport = clockMs;
+        printHeadingPidTrace(targetYaw, yaw, correction);
+    }
 }
 
 static uint8_t parsePair(const char *cursor, uint16_t *a, uint16_t *b)
@@ -1023,10 +1037,13 @@ static void startLine(const char *cursor, uint8_t heading)
     uint8_t id, direction;
     char way = *cursor++;
     uint32_t pulses;
-    if ((way != 'W' && way != 'S' && (!heading || (way != 'A' && way != 'D'))) || *cursor != ' ' ||
+    if ((heading == 2U ? (way != 'A' && way != 'D') :
+         (way != 'W' && way != 'S' && (!heading || (way != 'A' && way != 'D')))) ||
+        *cursor != ' ' ||
         !parsePair(cursor, &amount, &rpm) ||
-        !motionRequestValid(heading, amount, rpm)) {
-        serialSendString("ERR: line W|S 100..500(step100); straight W|S|A|D 1000..5000; rpm 10..120\r\n");
+        !motionRequestValid(heading, amount, rpm) ||
+        (heading == 2U && rpm > ROUTE_LATERAL_RPM_MAX)) {
+        serialSendString("ERR: line W|S 100..500(step100); straight W|S|A|D 1000..5000 rpm 10..120; pid move A|D 1000..5000 rpm 10..30\r\n");
         return;
     }
     if (!armed) { serialSendString("ERR: send 'arm' first\r\n"); return; }
@@ -1046,6 +1063,11 @@ static void startLine(const char *cursor, uint8_t heading)
         straightRpm = rpm;
         straightDirection = (way == 'W' || way == 'D') ? 1 : -1;
         straightLateral = (uint8_t)(way == 'A' || way == 'D');
+        straightUseRoutePid = (uint8_t)(heading == 2U);
+        if (straightUseRoutePid) {
+            routeHeadingPidReset(&routeHeadingPid);
+            headingPidLastReport = clockMs - 200U;
+        }
         straightSpeedState = straightTurnState = 0.0f;
         routeSentValid = 0U;
         motionDuration = amount;
@@ -1069,7 +1091,8 @@ static void startLine(const char *cursor, uint8_t heading)
         motionStart = clockMs;
         motionMode = 1U;
     }
-    serialSendString(heading ? "RUN heading hold; auto-disarmed\r\n" :
+    serialSendString(heading == 2U ? "RUN PID lateral heading hold; auto-disarmed\r\n" :
+                     heading ? "RUN heading hold; auto-disarmed\r\n" :
                               "TX queued: distance test; auto-disarmed\r\n");
 }
 
@@ -1883,6 +1906,10 @@ static void processCommand(const char *command)
     }
     if (strncmp(command, "straight ", 9U) == 0) {
         startLine(command + 9, 1U);
+        return;
+    }
+    if (strncmp(command, "pid move ", 9U) == 0) {
+        startLine(command + 9, 2U);
         return;
     }
     if (strcmp(command, "status") == 0) { printStatus(); return; }
