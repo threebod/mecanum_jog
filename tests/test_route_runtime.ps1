@@ -133,8 +133,19 @@ int main(void) {
     assert(processRouteCommand("pid set 300 50 20") &&
            routeAbs(routeHeadingGains.kp-2.35f)<0.001f);
     routeActive=0;
-    assert(processRouteCommand("pid set 401 25 12") &&
-           routeAbs(routeHeadingGains.kp-2.35f)<0.001f);
+    assert(processRouteCommand("pid set 1000 500 500") &&
+           routeAbs(routeHeadingGains.kp-10.0f)<0.001f &&
+           routeAbs(routeHeadingGains.ki-5.0f)<0.001f &&
+           routeAbs(routeHeadingGains.kd-5.0f)<0.001f);
+    assert(processRouteCommand("pid set 1001 25 12") &&
+           routeAbs(routeHeadingGains.kp-10.0f)<0.001f);
+    assert(processRouteCommand("pid set 1000 501 12") &&
+           routeAbs(routeHeadingGains.ki-5.0f)<0.001f);
+    assert(processRouteCommand("pid set 1000 25 501") &&
+           routeAbs(routeHeadingGains.kd-5.0f)<0.001f);
+    assert(processRouteCommand("pid set 0 0 0") &&
+           routeHeadingGains.kp==0 && routeHeadingGains.ki==0 &&
+           routeHeadingGains.kd==0);
     assert(processRouteCommand("pid set 200 25 12") &&
            routeAbs(routeHeadingGains.kp-ROUTE_HEADING_KP)<0.001f);
     assert(processRouteCommand("route scale 9250") &&

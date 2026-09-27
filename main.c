@@ -1735,8 +1735,8 @@ static uint8_t processRouteCommand(const char *command)
         cursor = command + 8U;
         if (!parseUint(&cursor, &kp100) || !parseUint(&cursor, &ki100) ||
             !parseUint(&cursor, &kd100) || *cursor != '\0' ||
-            kp100 < 50U || kp100 > 400U || ki100 > 100U || kd100 > 100U) {
-            serialSendString("ERR PID: set KP KI KD (x100); KP 50..400, KI/KD 0..100\r\n");
+            kp100 > 1000U || ki100 > 500U || kd100 > 500U) {
+            serialSendString("ERR PID: set KP KI KD (x100); KP 0..1000, KI/KD 0..500\r\n");
             return 1U;
         }
         if (motionMode || routeActive || mechanismState.running ||
