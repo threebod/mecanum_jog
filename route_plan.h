@@ -26,10 +26,10 @@
 typedef struct { int16_t x, y; const char *event; int8_t heading; } RoutePoint;
 static const RoutePoint routeTemplate[ROUTE_COUNT] = {
     {2100,2250,0,4}, {2100,1200,"QR",-1}, {2100,2080,0,4},
-    {1200,2080,"RAW_1",0}, {1200,400,"COARSE_1_DROP_PICK",2},
-    {1200,1200,0,4}, {400,1200,"TEMP_1_DROP",1}, {1200,1200,0,4},
-    {1200,2080,"RAW_2",0}, {1200,400,"COARSE_2_DROP_PICK",2},
-    {1200,1200,0,4}, {400,1200,"TEMP_2_STACK",1}, {1200,1200,0,4},
+    {1200,2080,"RAW_1",1}, {1200,400,"COARSE_1_DROP_PICK",-1},
+    {1200,1200,0,4}, {400,1200,"TEMP_1_DROP",2}, {1200,1200,0,4},
+    {1200,2080,"RAW_2",1}, {1200,400,"COARSE_2_DROP_PICK",-1},
+    {1200,1200,0,4}, {400,1200,"TEMP_2_STACK",2}, {1200,1200,0,4},
     {2100,1200,0,0}, {2100,2250,0,4}, {2250,2250,"HOME",4}
 };
 static RoutePoint routePoint(uint8_t index, uint8_t start)

@@ -55,9 +55,9 @@ int main(void)
     assert(navNodeAt(1200, 2080) == NAV_RAW);
     assert(navNodeAt(1201, 2080) == NAV_INVALID_NODE);
     assert(navPoint(NAV_QR).arrivalHeading == NAV_HEADING_RIGHT);
-    assert(navPoint(NAV_RAW).arrivalHeading == NAV_HEADING_UP);
-    assert(navPoint(NAV_COARSE).arrivalHeading == NAV_HEADING_DOWN);
-    assert(navPoint(NAV_TEMP).arrivalHeading == NAV_HEADING_LEFT);
+    assert(navPoint(NAV_RAW).arrivalHeading == NAV_HEADING_LEFT);
+    assert(navPoint(NAV_COARSE).arrivalHeading == NAV_HEADING_RIGHT);
+    assert(navPoint(NAV_TEMP).arrivalHeading == NAV_HEADING_DOWN);
     assert(navPointClear(150, 150));
     assert(navPointClear(2250, 2250));
     assert(!navPointClear(149, 150));
@@ -108,7 +108,7 @@ int main(void)
     count = navPlanPath(navPoint(NAV_START_2), navPoint(NAV_COARSE), route,
                         NAV_PATH_CAPACITY);
     assert(count > 0U &&
-           route[count - 1U].arrivalHeading == NAV_HEADING_DOWN);
+           route[count - 1U].arrivalHeading == NAV_HEADING_RIGHT);
     assert(navPlanPath(navPoint(NAV_START_1),
                        (NavPoint){700, 700, NAV_HEADING_KEEP}, route,
                        NAV_PATH_CAPACITY) == 0U);

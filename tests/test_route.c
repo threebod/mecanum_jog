@@ -45,6 +45,13 @@ int main(void)
     };
     int16_t forward, right;
     int8_t heading;
+    assert(routePoint(1U, 1U).heading == -1); /* front camera faces QR */
+    assert(routePoint(3U, 1U).heading == 1);
+    assert(routePoint(4U, 1U).heading == -1);
+    assert(routePoint(6U, 1U).heading == 2);
+    assert(routePoint(8U, 1U).heading == 1);
+    assert(routePoint(9U, 1U).heading == -1);
+    assert(routePoint(11U, 1U).heading == 2); /* right arm faces each table */
     for (start = 1; start <= 2; ++start) {
         x = 2250; y = start == 1 ? 2250 : 150; events = 0;
         heading = 0;

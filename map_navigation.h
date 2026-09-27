@@ -38,10 +38,10 @@ static const NavPoint navPoints[NAV_NODE_COUNT] = {
     {2100, 1200, NAV_HEADING_RIGHT},
     {2250, 150, NAV_HEADING_UP},
     {2100, 150, NAV_HEADING_KEEP},
-    {1200, 2080, NAV_HEADING_UP},
+    {1200, 2080, NAV_HEADING_LEFT},
     {1200, 1200, NAV_HEADING_KEEP},
-    {1200, 400, NAV_HEADING_DOWN},
-    {400, 1200, NAV_HEADING_LEFT}
+    {1200, 400, NAV_HEADING_RIGHT},
+    {400, 1200, NAV_HEADING_DOWN}
 };
 
 static NavPoint navPoint(uint8_t node)
