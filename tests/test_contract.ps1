@@ -38,12 +38,22 @@ $requiredMainPatterns = @(
     'RCC_APB1PeriphClockCmd\(RCC_APB1Periph_UART5, ENABLE\)',
     'GPIO_PinAFConfig\(GPIOC, GPIO_PinSource12, GPIO_AF_UART5\)',
     'GPIO_PinAFConfig\(GPIOD, GPIO_PinSource2, GPIO_AF_UART5\)',
+    'RCC_APB1PeriphClockCmd\(RCC_APB1Periph_UART4, ENABLE\)',
+    'GPIO_PinAFConfig\(GPIOC, GPIO_PinSource10, GPIO_AF_UART4\)',
+    'GPIO_PinAFConfig\(GPIOC, GPIO_PinSource11, GPIO_AF_UART4\)',
     'void UART5_IRQHandler\(void\)',
+    'void UART4_IRQHandler\(void\)',
     'void TIM2_IRQHandler\(void\)',
     '(?s)static void serviceHostWatchdog\(void\).*?hostHeartbeatActive = 0U;.*?stopServoMotion\(\);.*?stopAllMotors\(\);.*?ERR: host heartbeat timeout; stopped',
     '(?s)static void processCommand\(const char \*command\).*?strcmp\(command, "hb"\) == 0.*?hostHeartbeatActive = 1U;.*?hostHeartbeatStamp = clockMs;.*?return;.*?processRouteCommand\(command\)',
     '(?s)for \(;;\).*?serviceHostWatchdog\(\);.*?serviceMotion\(\);',
+    '(?s)for \(;;\).*?serviceMotion\(\);.*?serviceVision\(\);',
     '(?s)strncmp\(command, "pid move ", 9U\) == 0.*?startLine\(command \+ 9, 2U\)',
+    '#include "vision_control.h"',
+    '#include "vision_config.h"',
+    '(?s)static uint8_t processVisionCommand\(const char \*command\).*?vision pause.*?vision jog .*?vision align material .*?vision align ring ',
+    '(?s)visionSessionActive\(\).*?vision .*?failVision\("COMMAND_CONFLICT"\)',
+    '(?s)if \(visionSessionActive\(\).*?ERR: vision active; use vision pause, stop or ! first',
     "received == '!'",
     'else if \(!emergencyStop &&',
     '(?s)if \(emergencyStop\)\s*\{.*?stopServoMotion\(\);.*?stopAllMotors\(\);.*?__disable_irq\(\);.*?emergencyStop = 0U;',
@@ -90,7 +100,8 @@ $requiredMainPatterns = @(
     'RCC_APB1PeriphClockCmd\(RCC_APB1Periph_TIM2, ENABLE\)',
     'GPIO_PinAFConfig\(GPIOA, pinSource, GPIO_AF_TIM2\)',
     'TIM_ITConfig\(TIM2, TIM_IT_Update, ENABLE\)',
-    '(?s)static const uint8_t motorDirections\[4\]\[5\] = \{\s*\{1U, 1U, 0U, 0U, 1U\},\s*\{0U, 0U, 1U, 1U, 0U\},\s*\{1U, 1U, 1U, 0U, 0U\},\s*\{0U, 0U, 0U, 1U, 1U\}'
+    '(?s)static const uint8_t motorDirections\[4\]\[5\] = \{\s*\{1U, 1U, 0U, 0U, 1U\},\s*\{0U, 0U, 1U, 1U, 0U\},\s*\{1U, 1U, 1U, 0U, 0U\},\s*\{0U, 0U, 0U, 1U, 1U\}',
+    '(?s)wheelMm\[0\] = forward - right;\s*wheelMm\[1\] = forward \+ right;\s*wheelMm\[2\] = forward - right;\s*wheelMm\[3\] = forward \+ right;'
 )
 
 foreach ($pattern in $requiredMainPatterns) {
@@ -111,9 +122,6 @@ foreach ($check in @(
 }
 
 $forbiddenMainPatterns = @(
-    'USART1',
-    'GPIO_Pin_9',
-    'GPIO_Pin_10',
     'OK: chassis ',
     'OK: motor 5 direction ',
     'strcmp\(command, "enable"\) == 0',

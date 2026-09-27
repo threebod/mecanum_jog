@@ -1,0 +1,17 @@
+UART_DEVICE = "/dev/ttyS4"
+UART_PINS = {"A21": "UART4_TX", "A22": "UART4_RX"}
+BAUD = 9600
+
+COLOR_THRESHOLDS = {
+    1: [30, 80, 55, 105, 25, 80],
+    2: [50, 105, -30, 25, 35, 100],
+    3: [0, 40, 8, 35, -60, -30],
+    4: [50, 100, -100, -50, 20, 80],
+    5: [0, 20, -13, 11, -11, 13],
+    6: [33, 75, -20, 5, -32, -8],
+}
+MATERIAL_AREA = (1500, 30000)
+RING_CENTER_TOLERANCE = 8
+RING_MIN_RADIUS = 8
+RING_MAX_RADIUS = 150
+RING_MIN_DISTINCT_RADII = 2

@@ -48,7 +48,7 @@ class FindRingCenter:
         err.check_raise(pinmap.set_pin_function("B25", "GPIOB25"),
                         "set illumination pin failed")
         self.illuminator = gpio.GPIO("GPIOB25", gpio.Mode.OUT)
-        self.illuminator.value(1)
+        self.illuminator.value(0)
         atexit.register(self.illumination_off)   # 程序正常退出时自动关灯
 
         self.disp = disp

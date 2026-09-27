@@ -3,6 +3,7 @@ Objects/
 Listings/
 build.log
 build_*.log
+camera_code/dist/
 
 # Keil machine-specific files
 DebugConfig/

@@ -8,6 +8,8 @@
 #include "route_plan.h"
 #include "map_navigation.h"
 #include "mechanism_action.h"
+#include "vision_control.h"
+#include "vision_config.h"
 #include "hwt101.h"
 #include "jog_can.h"
 
@@ -130,6 +132,16 @@ static const MechanismAction *mechanismActions;
 static uint16_t mechanismActionCount, mechanismActionIndex;
 static uint8_t mechanismActionActive, mechanismActionDispatched;
 static uint32_t mechanismActionWaitUntil;
+static VisionSession visionSession;
+static VisionParser visionParser;
+static volatile VisionPacket visionRxPacket;
+static volatile uint8_t visionRxReady;
+static uint8_t visionMotionAutomatic;
+
+static void serviceVision(void);
+static uint8_t processVisionCommand(const char *command);
+static uint8_t visionSessionActive(void);
+static void failVision(const char *reason);
 
 static void invalidateMechanism(const char *reason)
 {
@@ -254,6 +266,77 @@ static void serialInit(void)
     USART_Cmd(UART5, ENABLE);
 }
 
+static void serialSendUint32(uint32_t value)
+{
+    char digits[10];
+    uint8_t count = 0U;
+
+    do {
+        digits[count++] = (char)('0' + value % 10U);
+        value /= 10U;
+    } while (value != 0U);
+
+    while (count > 0U) {
+        serialSendChar(digits[--count]);
+    }
+}
+
+static void visionUartInit(void)
+{
+    GPIO_InitTypeDef gpio;
+    USART_InitTypeDef uart;
+    NVIC_InitTypeDef nvic;
+    RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_UART4, ENABLE);
+    GPIO_PinAFConfig(GPIOC, GPIO_PinSource10, GPIO_AF_UART4);
+    GPIO_PinAFConfig(GPIOC, GPIO_PinSource11, GPIO_AF_UART4);
+    GPIO_StructInit(&gpio);
+    gpio.GPIO_Pin = GPIO_Pin_10 | GPIO_Pin_11;
+    gpio.GPIO_Mode = GPIO_Mode_AF;
+    gpio.GPIO_Speed = GPIO_Speed_50MHz;
+    gpio.GPIO_OType = GPIO_OType_PP;
+    gpio.GPIO_PuPd = GPIO_PuPd_UP;
+    GPIO_Init(GPIOC, &gpio);
+    USART_StructInit(&uart);
+    uart.USART_BaudRate = 9600U;
+    uart.USART_Mode = USART_Mode_Rx | USART_Mode_Tx;
+    USART_Init(UART4, &uart);
+    nvic.NVIC_IRQChannel = UART4_IRQn;
+    nvic.NVIC_IRQChannelPreemptionPriority = 1U;
+    nvic.NVIC_IRQChannelSubPriority = 1U;
+    nvic.NVIC_IRQChannelCmd = ENABLE;
+    NVIC_Init(&nvic);
+    vision_parser_init(&visionParser);
+    visionRxReady = 0U;
+    USART_ITConfig(UART4, USART_IT_RXNE, ENABLE);
+    USART_Cmd(UART4, ENABLE);
+}
+
+static void visionUartSend(const VisionPacket *packet)
+{
+    uint8_t frame[VISION_FRAME_SIZE];
+    uint8_t index;
+    vision_packet_encode(packet, frame);
+    for (index = 0U; index < VISION_FRAME_SIZE; ++index) {
+        while (USART_GetFlagStatus(UART4, USART_FLAG_TXE) == RESET) {
+        }
+        USART_SendData(UART4, frame[index]);
+    }
+}
+
+void UART4_IRQHandler(void)
+{
+    uint8_t byte;
+    VisionPacket packet;
+    if (USART_GetITStatus(UART4, USART_IT_RXNE) == RESET) return;
+    byte = (uint8_t)USART_ReceiveData(UART4);
+    if (!visionRxReady && vision_parser_feed(&visionParser, &byte, 1U, &packet)) {
+        visionRxPacket = packet;
+        visionRxReady = 1U;
+    }
+    USART_ClearITPendingBit(UART4, USART_IT_RXNE);
+}
+
 static void stopDriveMotors(void)
 {
     uint8_t id;
@@ -276,6 +359,12 @@ static void stopAuxMotors(void)
 
 static void stopAllMotors(void)
 {
+    if (visionSession.state == VISION_STATE_REQUEST ||
+        visionSession.state == VISION_STATE_WAIT ||
+        visionSession.state == VISION_STATE_MOVE ||
+        visionSession.state == VISION_STATE_SETTLE || motionMode == 4U) {
+        vision_session_pause(&visionSession);
+    }
     invalidateMechanism("stopped");
     mechanismActionActive = 0U;
     motionMode = 0U;
@@ -338,6 +427,9 @@ static void printHelp(void)
     serialSendString("  invert 1 1     reverse wheel 1..4 mapping, 0/1\r\n");
     serialSendString("  trim 1 1000    wheel scale 900..1100, RAM only\r\n");
     serialSendString("  imu 115200     IMU baud 9600/115200, PD5 TX / PD6 RX\r\n");
+    serialSendString("  vision align material 1..6 | ring 1..3 (armed)\r\n");
+    serialSendString("  vision scale ring N F R  mm/pixel x1000, RAM only (armed)\r\n");
+    serialSendString("  vision pause/status | vision jog F R RPM (armed)\r\n");
     serialSendString("  yawdir 0       correction sign: 0 normal, 1 reversed\r\n");
     serialSendString("  status         yaw, age, wheel mapping and trims\r\n");
     serialSendString("  route start 1|2 [rpm]  run map route (arm, nose UP)\r\n");
@@ -567,7 +659,7 @@ static void stopServoMotion(void)
 
 static void serviceHostWatchdog(void)
 {
-    uint8_t hadNavigation, hadFullRoute;
+    uint8_t hadNavigation, hadFullRoute, hadVision;
     if (!hostHeartbeatActive ||
         clockMs - hostHeartbeatStamp <= HOST_HEARTBEAT_TIMEOUT_MS) {
         return;
@@ -576,10 +668,12 @@ static void serviceHostWatchdog(void)
     hostHeartbeatActive = 0U;
     hadNavigation = navInitialized;
     hadFullRoute = fullRouteRunning;
+    hadVision = visionSessionActive();
     stopServoMotion();
     stopAllMotors();
     if (hadNavigation) serialSendString("NAV INVALID reason=heartbeat_timeout\r\n");
     if (hadFullRoute) serialSendString("ROUTE INVALID reason=heartbeat_timeout\r\n");
+    if (hadVision) failVision("HEARTBEAT_TIMEOUT");
     serialSendString("ERR: host heartbeat timeout; stopped\r\n");
 }
 
@@ -714,6 +808,131 @@ static void clockInit(void)
     TIM_Cmd(TIM7, ENABLE);
 }
 
+static uint8_t visionSessionActive(void)
+{
+    return visionSession.state == VISION_STATE_REQUEST ||
+           visionSession.state == VISION_STATE_WAIT ||
+           visionSession.state == VISION_STATE_MOVE ||
+           visionSession.state == VISION_STATE_SETTLE;
+}
+
+static const VisionCalibration *visionCalibration(void)
+{
+    if (visionSession.mode == VISION_MODE_MATERIAL) {
+        return &visionMaterialCalibration;
+    }
+    if (visionSession.target >= 1U && visionSession.target <= 3U) {
+        return &visionRingCalibration[visionSession.target - 1U];
+    }
+    return (const VisionCalibration *)0;
+}
+
+static const char *visionStateName(VisionState state)
+{
+    switch (state) {
+    case VISION_STATE_REQUEST: return "REQUEST";
+    case VISION_STATE_WAIT: return "WAIT";
+    case VISION_STATE_MOVE: return "MOVE";
+    case VISION_STATE_SETTLE: return "SETTLE";
+    case VISION_STATE_ALIGNED: return "ALIGNED";
+    case VISION_STATE_FAILED: return "FAILED";
+    case VISION_STATE_PAUSED: return "PAUSED";
+    default: return "IDLE";
+    }
+}
+
+static void serialSendFloat1(float value)
+{
+    uint16_t integer;
+    uint16_t fraction;
+    if (value < 0.0f) {
+        serialSendChar('-');
+        value = -value;
+    }
+    integer = (uint16_t)value;
+    fraction = (uint16_t)((value - integer) * 10.0f + 0.5f);
+    if (fraction >= 10U) {
+        ++integer;
+        fraction = 0U;
+    }
+    serialSendUint(integer);
+    serialSendChar('.');
+    serialSendUint(fraction);
+}
+
+static void printVisionState(void)
+{
+    serialSendString("VISION STATE state=");
+    serialSendString(visionStateName(visionSession.state));
+    serialSendString(" mode=");
+    serialSendString(visionSession.mode == VISION_MODE_RING ? "RING" : "MATERIAL");
+    serialSendString(" selector=");
+    serialSendUint(visionSession.selector);
+    serialSendString(" target=");
+    serialSendUint(visionSession.target);
+    serialSendString(" iteration=");
+    serialSendUint(visionSession.iteration);
+    serialSendString("\r\n");
+}
+
+static void failVision(const char *reason)
+{
+    if (motionMode == 4U) {
+        stopDriveMotors();
+        motionMode = 0U;
+    }
+    visionSession.state = VISION_STATE_FAILED;
+    visionSession.fault = reason;
+    serialSendString("VISION ERROR reason=");
+    serialSendString(reason);
+    serialSendString("\r\n");
+}
+
+static uint8_t startVisionMotion(float forwardMm, float rightMm,
+                                 uint16_t rpm, uint8_t automatic)
+{
+    float forward = forwardMm / routeForwardScale;
+    float right = rightMm / routeLateralScale;
+    float wheelMm[4];
+    uint32_t maximumPulses = 0U;
+    uint8_t id;
+    uint8_t moved = 0U;
+    wheelMm[0] = forward - right;
+    wheelMm[1] = forward + right;
+    wheelMm[2] = forward - right;
+    wheelMm[3] = forward + right;
+    setAllMotorsEnabled(true);
+    if (motionInterrupted()) return 0U;
+    for (id = 1U; id <= 4U; ++id) {
+        float distance = wheelMm[id - 1U];
+        uint8_t direction = motorDirections[DIRECTION_FORWARD][id] ^ motorInvert[id];
+        uint32_t pulses;
+        if (distance < 0.0f) {
+            distance = -distance;
+            direction ^= 1U;
+        }
+        pulses = (uint32_t)(distance * 3200.0f / ROUTE_MM_PER_REV + 0.5f);
+        if (pulses == 0U) {
+            Emm_V5_Stop_Now(id, false);
+            continue;
+        }
+        if (pulses > maximumPulses) maximumPulses = pulses;
+        moved = 1U;
+        Emm_V5_Pos_Control(id, direction,
+                           (uint16_t)((uint32_t)rpm * motorTrim[id] / 1000U),
+                           MOTOR_TEST_ACCEL, pulses, false, true);
+        delay_ms(2U);
+    }
+    if (!moved || motionInterrupted()) return 0U;
+    Emm_V5_Synchronous_motion(0x00);
+    invalidateNavigation("vision_motion");
+    motionStart = clockMs;
+    motionDuration = maximumPulses * 60000U / (3200U * rpm) + 800U;
+    motionMode = 4U;
+    visionMotionAutomatic = automatic;
+    return 1U;
+}
+
 static void serviceMotion(void)
 {
     uint32_t elapsed, age, dt, edge, sampleMs;
@@ -724,6 +943,24 @@ static void serviceMotion(void)
     uint16_t speed;
     if (!motionMode || emergencyStop) return;
     elapsed = clockMs - motionStart;
+    if (motionMode == 4U) {
+        if (motionInterrupted()) {
+            failVision("MOTION_FAULT");
+            return;
+        }
+        if (elapsed >= motionDuration) {
+            stopDriveMotors();
+            motionMode = 0U;
+            if (visionMotionAutomatic) {
+                vision_session_move_complete(&visionSession, clockMs);
+                printVisionState();
+            } else {
+                vision_session_pause(&visionSession);
+                serialSendString("VISION PAUSED\r\n");
+            }
+        }
+        return;
+    }
     if (motionMode == 3U) {
         extId = 0U;
         dlc = function = status = checksum = 0U;
@@ -1890,6 +2127,208 @@ static uint8_t processRouteCommand(const char *command)
     return 1U;
 }
 
+static void serviceVision(void)
+{
+    const VisionCalibration *calibration;
+    VisionPacket packet;
+    VisionEvent event;
+    int16_t du;
+    int16_t dv;
+    if (!visionSessionActive()) {
+        visionRxReady = 0U;
+        return;
+    }
+    if (!imuValid || clockMs - imuStamp > 250U || motionInterrupted()) {
+        failVision("IMU_OR_CAN_FAULT");
+        return;
+    }
+    calibration = visionCalibration();
+    event = vision_session_tick(&visionSession, clockMs);
+    if (event == VISION_EVENT_FAILED) {
+        failVision(visionSession.fault);
+        return;
+    }
+    if (visionSession.state == VISION_STATE_REQUEST) {
+        vision_session_make_request(&visionSession, calibration, &packet, clockMs);
+        visionUartSend(&packet);
+        printVisionState();
+    }
+    if (!visionRxReady) return;
+    __disable_irq();
+    packet = visionRxPacket;
+    visionRxReady = 0U;
+    __enable_irq();
+    event = vision_session_observe(&visionSession, calibration, &packet, clockMs);
+    if (event == VISION_EVENT_NONE) return;
+    du = (int16_t)(packet.value[0] - calibration->anchorU);
+    dv = (int16_t)(packet.value[1] - calibration->anchorV);
+    serialSendString("VISION SAMPLE token=");
+    serialSendUint32(packet.token);
+    serialSendString(" du="); serialSendInt(du);
+    serialSendString(" dv="); serialSendInt(dv);
+    serialSendString(" forward_mm="); serialSendFloat1(visionSession.forwardMm);
+    serialSendString(" right_mm="); serialSendFloat1(visionSession.rightMm);
+    serialSendString(" quality="); serialSendUint((uint16_t)packet.value[2]);
+    serialSendString(" iteration="); serialSendUint(visionSession.iteration);
+    serialSendString("\r\n");
+    if (event == VISION_EVENT_MOVE) {
+        if (!imuValid || clockMs - imuStamp > 250U ||
+            !startVisionMotion(visionSession.forwardMm, visionSession.rightMm,
+                               15U, 1U)) {
+            failVision("MOTION_START_FAILED");
+            return;
+        }
+        printVisionState();
+    } else if (event == VISION_EVENT_ALIGNED) {
+        stopDriveMotors();
+        serialSendString("VISION DONE forward_mm=");
+        serialSendFloat1(visionSession.forwardMm);
+        serialSendString(" right_mm=");
+        serialSendFloat1(visionSession.rightMm);
+        serialSendString(" iterations=");
+        serialSendUint(visionSession.iteration);
+        serialSendString("\r\n");
+    } else if (event == VISION_EVENT_FAILED) {
+        failVision(visionSession.fault);
+    }
+}
+
+static uint8_t processVisionCommand(const char *command)
+{
+    const char *cursor;
+    const VisionCalibration *calibration;
+    uint16_t value;
+    uint16_t rpm;
+    uint16_t forwardMilli;
+    uint16_t rightMilli;
+    int16_t forward;
+    int16_t right;
+    uint8_t mode;
+    uint8_t selector;
+    uint8_t target;
+    if (strcmp(command, "vision status") == 0) {
+        printVisionState();
+        return 1U;
+    }
+    if (strcmp(command, "vision pause") == 0) {
+        if (motionMode == 4U) {
+            stopDriveMotors();
+            motionMode = 0U;
+        }
+        vision_session_pause(&visionSession);
+        serialSendString("VISION PAUSED\r\n");
+        return 1U;
+    }
+    if (visionSessionActive() && strncmp(command, "vision ", 7U) == 0) {
+        failVision("COMMAND_CONFLICT");
+        return 1U;
+    }
+    if (strncmp(command, "vision scale ring ", 18U) == 0) {
+        cursor = command + 18U;
+        if (!mechanismParseUnsigned(&cursor, &value) ||
+            !mechanismParseUnsigned(&cursor, &forwardMilli) ||
+            !mechanismParseUnsigned(&cursor, &rightMilli) ||
+            !mechanismAtEnd(cursor) || value < 1U || value > 3U ||
+            forwardMilli < 50U || forwardMilli > 2000U ||
+            rightMilli < 50U || rightMilli > 2000U) {
+            serialSendString("VISION ERROR reason=SCALE_RANGE\r\n");
+            return 1U;
+        }
+        if (motionMode || routeActive || mechanismState.running ||
+            mechanismActionActive || visionSession.state == VISION_STATE_PAUSED ||
+            !armed || motionInterrupted()) {
+            serialSendString("VISION ERROR reason=SCALE_REQUIRES_ARMED_IDLE\r\n");
+            return 1U;
+        }
+        armed = 0U;
+        visionRingCalibration[value - 1U].anchorU = 160;
+        visionRingCalibration[value - 1U].anchorV = 120;
+        visionRingCalibration[value - 1U].matrix[0] = 0.0f;
+        visionRingCalibration[value - 1U].matrix[1] = -(float)forwardMilli / 1000.0f;
+        visionRingCalibration[value - 1U].matrix[2] = (float)rightMilli / 1000.0f;
+        visionRingCalibration[value - 1U].matrix[3] = 0.0f;
+        visionRingCalibration[value - 1U].calibrated = 1U;
+        serialSendString("VISION SCALE ring=");
+        serialSendUint(value);
+        serialSendString(" forward_milli=");
+        serialSendUint(forwardMilli);
+        serialSendString(" right_milli=");
+        serialSendUint(rightMilli);
+        serialSendString("\r\n");
+        return 1U;
+    }
+    if (strncmp(command, "vision jog ", 11U) == 0) {
+        cursor = command + 11U;
+        if (!mechanismParseSigned(&cursor, &forward) ||
+            !mechanismParseSigned(&cursor, &right) ||
+            !mechanismParseUnsigned(&cursor, &rpm) || !mechanismAtEnd(cursor) ||
+            (forward == 0 && right == 0) || forward < -20 || forward > 20 ||
+            right < -20 || right > 20 || rpm < 10U || rpm > 30U) {
+            serialSendString("VISION ERROR reason=JOG_RANGE\r\n");
+            return 1U;
+        }
+        if (visionSession.state != VISION_STATE_PAUSED || motionMode || routeActive ||
+            mechanismState.running || mechanismActionActive || !armed ||
+            !imuValid || clockMs - imuStamp > 250U) {
+            serialSendString("VISION ERROR reason=JOG_REQUIRES_PAUSED_ARMED_IDLE_FRESH_IMU\r\n");
+            return 1U;
+        }
+        armed = 0U;
+        if (!startVisionMotion((float)forward, (float)right, rpm, 0U)) {
+            failVision("JOG_START_FAILED");
+        } else {
+            serialSendString("VISION STATE state=MOVE mode=MANUAL selector=0 target=0 iteration=0\r\n");
+        }
+        return 1U;
+    }
+    if (strncmp(command, "vision align material ", 22U) == 0) {
+        cursor = command + 22U;
+        mode = VISION_MODE_MATERIAL;
+        selector = 0U;
+        target = 0U;
+        if (!mechanismParseUnsigned(&cursor, &value) || !mechanismAtEnd(cursor) ||
+            value < 1U || value > 6U) {
+            serialSendString("VISION ERROR reason=MATERIAL_COLOR_RANGE\r\n");
+            return 1U;
+        }
+        selector = (uint8_t)value;
+        calibration = &visionMaterialCalibration;
+    } else if (strncmp(command, "vision align ring ", 18U) == 0) {
+        cursor = command + 18U;
+        mode = VISION_MODE_RING;
+        selector = 0U;
+        target = 0U;
+        if (!mechanismParseUnsigned(&cursor, &value) || !mechanismAtEnd(cursor) ||
+            value < 1U || value > 3U) {
+            serialSendString("VISION ERROR reason=RING_RANGE\r\n");
+            return 1U;
+        }
+        target = (uint8_t)value;
+        calibration = &visionRingCalibration[target - 1U];
+    } else {
+        return 0U;
+    }
+    if (!vision_calibration_valid(calibration)) {
+        serialSendString("VISION ERROR reason=CALIBRATION_INVALID\r\n");
+        return 1U;
+    }
+    if (motionMode || routeActive || mechanismState.running ||
+        mechanismActionActive || visionSessionActive() || !armed ||
+        !imuValid || clockMs - imuStamp > 250U || motionInterrupted()) {
+        serialSendString("VISION ERROR reason=ALIGN_REQUIRES_ARMED_IDLE_FRESH_IMU\r\n");
+        return 1U;
+    }
+    if (!vision_session_start(&visionSession, mode, selector, target,
+                              calibration, clockMs)) {
+        serialSendString("VISION ERROR reason=START_REJECTED\r\n");
+        return 1U;
+    }
+    armed = 0U;
+    invalidateNavigation("vision_motion");
+    printVisionState();
+    return 1U;
+}
+
 static void processCommand(const char *command)
 {
     uint16_t id, value;
@@ -1897,6 +2336,13 @@ static void processCommand(const char *command)
     if (strcmp(command, "hb") == 0) {
         hostHeartbeatActive = 1U;
         hostHeartbeatStamp = clockMs;
+        return;
+    }
+    if (processVisionCommand(command)) return;
+    if (visionSessionActive() && strcmp(command, "stop") != 0 &&
+        strcmp(command, "X") != 0 && strcmp(command, "x") != 0 &&
+        strcmp(command, "disable") != 0) {
+        serialSendString("ERR: vision active; use vision pause, stop or ! first\r\n");
         return;
     }
     if (processMechanismCommand(command)) return;
@@ -1992,8 +2438,10 @@ static void processCommand(const char *command)
         serialSendString("ARMED for one enable or motion command\r\n");
     } else if (strcmp(command, "disable") == 0) {
         uint8_t hadFullRoute = fullRouteRunning;
+        uint8_t hadVision = visionSessionActive() || motionMode == 4U;
         stopAllMotors();
         if (hadFullRoute) serialSendString("ROUTE INVALID reason=disabled\r\n");
+        if (hadVision) serialSendString("VISION PAUSED\r\n");
         setAllMotorsEnabled(false);
         setAuxMotorsEnabled(false);
         armed = 0U;
@@ -2013,10 +2461,12 @@ static void processCommand(const char *command)
                strcmp(command, "stop") == 0) {
         uint8_t hadNavigation = navInitialized;
         uint8_t hadFullRoute = fullRouteRunning;
+        uint8_t hadVision = visionSessionActive() || motionMode == 4U;
         stopServoMotion();
         stopAllMotors();
         if (hadNavigation) serialSendString("NAV INVALID reason=stopped\r\n");
         if (hadFullRoute) serialSendString("ROUTE INVALID reason=stopped\r\n");
+        if (hadVision) serialSendString("VISION PAUSED\r\n");
         serialSendString("STOPPED and disarmed\r\n");
     } else if (strcmp(command, "help") == 0 || strcmp(command, "?") == 0) {
         printHelp();
@@ -2069,8 +2519,10 @@ int main(void)
     clockInit();
     serialInit();
     hwt101Init(115200U);
+    visionUartInit();
 
     mechanismStateReset(&mechanismState);
+    vision_session_init(&visionSession);
     stopAllMotors();
     serialSendString("\r\nYYB mecanum/servo jog ready; motors 1..6 stopped; disarmed.\r\n");
     printHelp();
@@ -2079,15 +2531,18 @@ int main(void)
         if (jogCanFault) {
             uint8_t hadNavigation = navInitialized;
             uint8_t hadFullRoute = fullRouteRunning;
+            uint8_t hadVision = visionSessionActive() || motionMode == 4U;
             stopAllMotors();
             jogCanFault = 0U;
             if (hadNavigation) serialSendString("NAV INVALID reason=can_fault\r\n");
             if (hadFullRoute) serialSendString("ROUTE INVALID reason=can_fault\r\n");
+            if (hadVision) failVision("CAN_FAULT");
             serialSendString("ERR: CAN transmit failed; stop attempted, check power/bus\r\n");
         }
         if (emergencyStop) {
             uint8_t hadNavigation = navInitialized;
             uint8_t hadFullRoute = fullRouteRunning;
+            uint8_t hadVision = visionSessionActive() || motionMode == 4U;
             stopServoMotion();
             stopAllMotors();
             __disable_irq();
@@ -2097,6 +2552,7 @@ int main(void)
             __enable_irq();
             if (hadNavigation) serialSendString("NAV INVALID reason=emergency_stop\r\n");
             if (hadFullRoute) serialSendString("ROUTE INVALID reason=emergency_stop\r\n");
+            if (hadVision) failVision("EMERGENCY_STOP");
             serialSendString("EMERGENCY STOP; motors 1..6 stopped; disarmed\r\n");
         }
 
@@ -2110,6 +2566,7 @@ int main(void)
         }
         serviceHostWatchdog();
         serviceMotion();
+        serviceVision();
         serviceMechanism();
         mechanismActionService();
         serviceRoute();

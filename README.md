@@ -52,6 +52,11 @@ route tune F L T [V]   空闲时设置纵向/横向比例、转向及横移上�
 route scale N      兼容命令：仅设置横移比例
 pid get            读取导航/路线平移航向 PID 的 RAM 当前值
 pid set KP KI KD   停车后设置航向 PID，三个参数均为实际增益的100倍
+vision align material N  对准颜色1～6的物料，必须先arm且已完成视觉标定
+vision align ring N      对准物理圆环1～3，必须先arm且已完成视觉标定
+vision scale ring N F R  空闲且arm后设置圆环N的前后、左右比例；F/R为毫米/像素乘1000，范围50～2000
+vision pause/status      停止并接管/查询视觉状态
+vision jog F R RPM       车体前/右方向各-20～20mm，10～30RPM，必须先arm
 mech init H L T    人工确认当前机构姿态，单位为0.1 mm/0.1°，无需arm
 mech pose H L T HR HA LR LA TS  移动到机构姿态，必须先arm
 mech status        查询机构估计姿态
@@ -64,6 +69,14 @@ mech status        查询机构估计姿态
 导航/路线平移航向 PID 可在上位机“临时调试”页读取和写入，也可用 `pid get`、`pid set 200 25 12`。Kp 范围 0～10.00，Ki/Kd 范围 0～5.00，纠偏输出仍限于 ±12 RPM；写入时底盘及机构必须停稳，固件会回报当前值。参数只保存在 RAM，复位后恢复 2.00/0.25/0.12。平移期间约每 200 ms 输出 `PID TRACE target_cdeg=... actual_cdeg=... output_rpm=...`，上位机据此绘制目标/实际航向与纠偏输出曲线。原地转向和 `straight` 命令仍使用原有控制器。
 
 `pid move A|D 2000 20` 用当前航向作目标，以导航航向 PID 限时向左/右横移并输出相同的曲线数据；需先 `arm`，时间 1000～5000 ms、速度 10 RPM 至当前横移上限。到时会停车，移动距离不作测量。上位机“临时调试”页提供左右按钮和时间、速度设置。
+
+## 视觉微调
+
+MaixCAM通过UART4连接：STM32 PC10(TX)接MaixCAM2 A22(RX)、PC11(RX)接MaixCAM2 A21(TX)，9600、8N1、3.3V逻辑并共地。部署 `camera_code` 整个目录并运行其中的 `main.py`。UART5仍用于上位机，USART2仍用于IMU。
+
+自动微调按“停车识别—有限小步—停稳复检”执行；每轴单步最多20mm、累计最多100mm、最多12次，连续两次换算误差均不超过5mm才完成。相机帧使用30字节CRC协议和请求token，过期、重复、无效或非稳定结果均不能触发运动。`stop`、`!`、心跳超时、IMU/CAN异常和`vision pause`都会停止闭环。视觉或人工小步会使地图积分位置失效，之后必须重新`nav init`。
+
+自动功能默认锁定。圆环可在上位机“视觉微调”页分别调整前后、左右毫米/像素比例，再点击“应用当前圆环比例”；主控确认后，该圆环以画面中心 `(160,120)` 为目标，按 `前后=-F×dv/1000`、`左右=R×du/1000` 换算。三个圆环的当前初值 `F=640`、`R=673` 都暂取自圆环2的粗略手动位移测量，并非圆环1、3的独立实测值，只适合低速小步验证；请先核对车体方向、急停和每步位移。比例只保存在主控 RAM 中，重启后每个圆环都需重新应用。未应用时固件返回 `VISION ERROR reason=CALIBRATION_INVALID`。每个目标仍须保证相机能唯一识别，并按实际场景调整 `vision_config.h` 中的 ROI。物料自动对准仍须按 [camera_code/README.md](camera_code/README.md) 完成九点标定并写入矩阵、ROI、锚点。不得用零矩阵解锁。
 
 地图移动距离仍是开环估算。`route_plan.h` 的 `ROUTE_FORWARD_SCALE` 与
 `ROUTE_LATERAL_SCALE` 分别标定前后和横移。100 RPM、横移比例90%的6次中心点测试中，

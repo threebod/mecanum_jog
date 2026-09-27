@@ -5,7 +5,7 @@ $root = Split-Path -Parent $PSScriptRoot
 $source = Get-Content (Join-Path $root 'main.c') -Raw
 # Compile the actual route state machine with a simulated clock / IMU / motors.
 $service = $source.Substring($source.LastIndexOf('static void sendRouteSpeeds(int16_t forward, int16_t right, int16_t turn)'))
-$service = $service.Substring(0, $service.IndexOf('static void processCommand('))
+$service = $service.Substring(0, $service.IndexOf('static void serviceVision('))
 $parser = $source.Substring($source.IndexOf('static uint8_t parseUint('))
 $parser = $parser.Substring(0, $parser.IndexOf('static CommandResult parseServoCommand('))
 $pair = $source.Substring($source.IndexOf('static uint8_t parsePair('))
@@ -60,6 +60,9 @@ static uint32_t navLastReport,routeLastReport;
 static unsigned navPosReports,navDoneReports,navInvalidReports;
 static unsigned pidTraceReports;
 static unsigned routePosReports,routeStageReports,routeDoneReports,routeInvalidReports;
+typedef struct {uint8_t state;} VisionSession;
+static VisionSession visionSession;
+static uint8_t visionMotionAutomatic;
 #define __disable_irq() ((void)0)
 #define __enable_irq() ((void)0)
 #define AUX_MOVE_STATUS_POLL_MS 50U
@@ -83,6 +86,12 @@ static void printRouteStatus(void) {}
 static uint8_t motionInterrupted(void) {return emergencyStop || jogCanFault;}
 static void setAllMotorsEnabled(bool x) {(void)x;}
 static void stopDriveMotors(void) {routeForward=routeRight=commandTurn=0;}
+static void failVision(const char *reason) {(void)reason;motionMode=0;}
+static void printVisionState(void) {}
+static void vision_session_move_complete(VisionSession *session,uint32_t now) {
+    (void)session;(void)now;
+}
+static void vision_session_pause(VisionSession *session) {(void)session;}
 static void invalidateNavigation(const char *reason) {
     (void)reason;serialSendString("NAV INVALID reason=");
     navInitialized=navRunning=navPathCount=0;
