@@ -29,6 +29,7 @@ static uint8_t auxMoveMotorId;
 static int8_t routeHeading,routeNextHeading,yawSign=1;
 static float routeX,routeY,routeYaw,routeBaseYaw,imuYaw;
 static float routeDriveRpm,routeTurnRpm,routeCorrection;
+static uint32_t headingPidLastReport;
 static RouteHeadingPid routeHeadingPid;
 static RouteHeadingPidGains routeHeadingGains={
     ROUTE_HEADING_KP,ROUTE_HEADING_KI,ROUTE_HEADING_KD};
@@ -55,6 +56,7 @@ static uint8_t navInitialized,navRunning,navCurrentNode,navPathCount;
 static NavPoint navPath[NAV_PATH_CAPACITY];
 static uint32_t navLastReport,routeLastReport;
 static unsigned navPosReports,navDoneReports,navInvalidReports;
+static unsigned pidTraceReports;
 static unsigned routePosReports,routeStageReports,routeDoneReports,routeInvalidReports;
 #define __disable_irq() ((void)0)
 #define __enable_irq() ((void)0)
@@ -64,6 +66,7 @@ typedef struct {uint32_t ExtId;uint8_t DLC;uint8_t Data[8];} TestCanRxMsg;
 static struct {TestCanRxMsg CAN_RxMsg;bool rxFrameFlag;} can;
 static void serialSendString(const char *s) {
     if(strcmp(s,"NAV POS x=")==0) ++navPosReports;
+    if(strcmp(s,"PID TRACE target_cdeg=")==0) ++pidTraceReports;
     if(strcmp(s,"NAV DONE x=")==0) ++navDoneReports;
     if(strncmp(s,"NAV INVALID",11)==0) ++navInvalidReports;
     if(strcmp(s,"ROUTE POS x=")==0) ++routePosReports;
@@ -203,6 +206,7 @@ int main(void) {
     assert(!routeActive && routeAbs(headingError(routeYaw,imuYaw))>2);
     armed=1;processRouteCommand("route auto 1");
     clockMs+=300;serviceRoute();assert(!routeActive); /* stale IMU */
+    pidTraceReports=0;
     for(sign=-1;sign<=1;sign+=2) for(start=1;start<=2;++start)
         for(target=0;target<sizeof(targetNode)/sizeof(targetNode[0]);++target) {
             NavPoint destination=navPoint((uint8_t)targetNode[target]);
@@ -224,6 +228,7 @@ int main(void) {
             for(n=0;n<100 && navRunning;++n) tick();
             assert(navInitialized && !navRunning && navDoneReports==2);
         }
+    assert(pidTraceReports>0); /* translating navigation emits heading samples */
     stopAllMotors();imuYaw=0;imuStamp=clockMs;imuValid=1;yawSign=1;
     assert(processNavCommand("nav init 1") && navInitialized);
     armed=1;assert(processNavCommand("nav goto 400 1200") && navRunning);

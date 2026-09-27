@@ -106,6 +106,7 @@ static NavPoint navPath[NAV_PATH_CAPACITY];
 static uint8_t navPathCount;
 static uint32_t navLastReport, routeLastReport;
 static float routeDriveRpm, routeTurnRpm, routeCorrection;
+static uint32_t headingPidLastReport;
 static RouteHeadingPid routeHeadingPid;
 static RouteHeadingPidGains routeHeadingGains = {
     ROUTE_HEADING_KP, ROUTE_HEADING_KI, ROUTE_HEADING_KD
@@ -1300,6 +1301,17 @@ static void printHeadingPidStatus(void)
     serialSendString(" RAM_only\r\n");
 }
 
+static void printHeadingPidTrace(float targetYaw, float actualYaw, int16_t turn)
+{
+    serialSendString("PID TRACE target_cdeg=");
+    serialSendInt((int16_t)(headingError(targetYaw, 0.0f) * 100.0f));
+    serialSendString(" actual_cdeg=");
+    serialSendInt((int16_t)(actualYaw * 100.0f));
+    serialSendString(" output_rpm=");
+    serialSendInt(turn);
+    serialSendString("\r\n");
+}
+
 static int16_t navFieldYawCdeg(void)
 {
     float fieldYaw = 90.0f + headingError(imuYaw, routeBaseYaw) * yawSign;
@@ -1574,6 +1586,10 @@ static void serviceRoute(void)
     turn = routeRound(routeCorrection);
     routeBody(routeForward, routeRight, routeHeading, &bodyForward, &bodyRight);
     sendRouteSpeeds(bodyForward, bodyRight, turn);
+    if (!motionInterrupted() && now - headingPidLastReport >= 200U) {
+        headingPidLastReport = now;
+        printHeadingPidTrace(routeYaw, yaw, turn);
+    }
 }
 
 static uint8_t processNavCommand(const char *command)
