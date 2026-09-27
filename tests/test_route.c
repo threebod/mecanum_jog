@@ -81,7 +81,7 @@ int main(void)
     assert(routeAbs(routeEstimateScaled(-60,1000,0.925f)+
                     314.159265f*0.925f) < 0.001f);
     assert(routeAbs(ROUTE_LATERAL_SCALE-0.9f) < 0.0001f);
-    assert(ROUTE_LATERAL_RPM_MAX == 30U);
+    assert(ROUTE_LATERAL_RPM_MAX == 60U);
     routeHeadingPidReset(&headingPid);
     assert(routeHeadingPidStep(&headingPid, &gains, 0, 179, 100, 20, 1) == 0);
     assert(routeHeadingPidStep(&headingPid, &gains, -2, -179, 200, 20, 1) < -4);
@@ -104,8 +104,8 @@ int main(void)
     routeBody(0,20,-1,&forward,&right); assert(forward==20 && right==0);
     routeBody(20,10,2,&forward,&right); assert(forward==-20 && right==-10);
     routeBody(20,10,0,&forward,&right); assert(forward==20 && right==10);
-    assert(routeTurnSpeed(90,1)==30 && routeTurnSpeed(-90,1)==-30);
-    assert(routeTurnSpeed(90,-1)==-30 && routeTurnSpeed(-90,-1)==30);
+    assert(routeTurnSpeed(90,1)==45 && routeTurnSpeed(-90,1)==-45);
+    assert(routeTurnSpeed(90,-1)==-45 && routeTurnSpeed(-90,-1)==45);
     assert(routeTurnSpeed(3,1)==3);
     assert(routeTurnSpeedLimited(90,1,45)==45);
     assert(routeSpeed(1000,0,60)==0);

@@ -115,6 +115,7 @@ static uint16_t routeRpm = ROUTE_RPM;
 static float routeForwardScale = ROUTE_FORWARD_SCALE;
 static float routeLateralScale = ROUTE_LATERAL_SCALE;
 static uint16_t routeTurnRpmLimit = (uint16_t)ROUTE_TURN_RPM;
+static uint16_t routeLateralRpmLimit = ROUTE_LATERAL_RPM_MAX;
 static int16_t routeSent[4];
 static uint8_t routeSentValid;
 static uint8_t straightLateral;
@@ -331,7 +332,7 @@ static void printHelp(void)
     serialSendString("  help      show this help\r\n");
     serialSendString("  line W 100 30   synced forward 100mm at 30rpm (arm)\r\n");
     serialSendString("  straight W 2000 30  IMU heading hold, 2000ms (arm)\r\n");
-    serialSendString("  pid move A|D 2000 20  lateral heading PID test, 1000..5000ms, 10..30rpm (arm)\r\n");
+    serialSendString("  pid move A|D 2000 20  lateral heading PID test, 1000..5000ms, 10..lateral limit rpm (arm)\r\n");
     serialSendString("  line: W/S, 100..500mm step 100; straight: W/S/A/D; 10..120rpm\r\n");
     serialSendString("  wheel 1 0      single wheel 1..4, raw dir 0/1 (arm)\r\n");
     serialSendString("  invert 1 1     reverse wheel 1..4 mapping, 0/1\r\n");
@@ -343,7 +344,7 @@ static void printHelp(void)
     serialSendString("  route step 1|2 [rpm]   pause at EVERY waypoint (arm)\r\n");
     serialSendString("  route next       continue from a stopped checkpoint\r\n");
     serialSendString("  route status     estimated position / checkpoint\r\n");
-    serialSendString("  route tune F L T  forward/lateral bp and turn RPM, RAM only\r\n");
+    serialSendString("  route tune F L T [V]  scales, turn and lateral RPM limit, RAM only\r\n");
     serialSendString("  route auto 1|2 [rpm]   full route; rpm 10..120 (arm)\r\n");
     serialSendString("  turn L|R 1..180  relative IMU turn in clear space (arm)\r\n");
     serialSendString("  nav init 1|2       set estimated start pose; fresh IMU, idle\r\n");
@@ -1042,8 +1043,8 @@ static void startLine(const char *cursor, uint8_t heading)
         *cursor != ' ' ||
         !parsePair(cursor, &amount, &rpm) ||
         !motionRequestValid(heading, amount, rpm) ||
-        (heading == 2U && rpm > ROUTE_LATERAL_RPM_MAX)) {
-        serialSendString("ERR: line W|S 100..500(step100); straight W|S|A|D 1000..5000 rpm 10..120; pid move A|D 1000..5000 rpm 10..30\r\n");
+        (heading == 2U && rpm > routeLateralRpmLimit)) {
+        serialSendString("ERR: line W|S 100..500(step100); straight W|S|A|D 1000..5000 rpm 10..120; pid move A|D 1000..5000 rpm 10..lateral limit\r\n");
         return;
     }
     if (!armed) { serialSendString("ERR: send 'arm' first\r\n"); return; }
@@ -1284,6 +1285,8 @@ static void printRouteStatus(void)
     serialSendUint((uint16_t)(routeLateralScale * 10000.0f + 0.5f));
     serialSendString(" turn_rpm=");
     serialSendUint(routeTurnRpmLimit);
+    serialSendString(" lateral_rpm_limit=");
+    serialSendUint(routeLateralRpmLimit);
     serialSendString(" (command estimate, NOT localization)\r\n");
 }
 
@@ -1595,8 +1598,8 @@ static void serviceRoute(void)
     /* Map-axis translation is transformed to the current body heading. */
     lateral = routeAbs(dx) > 1.5f;
     remaining = lateral ? routeAbs(dx) : routeAbs(dy);
-    cruiseRpm = lateral && routeRpm > ROUTE_LATERAL_RPM_MAX ?
-        ROUTE_LATERAL_RPM_MAX : routeRpm;
+    cruiseRpm = lateral && routeRpm > routeLateralRpmLimit ?
+        routeLateralRpmLimit : routeRpm;
     speed = routeSpeed(remaining, now - routeLegStart, cruiseRpm);
     routeDriveRpm = routeSlew(routeDriveRpm, speed, ROUTE_ACCEL_RPM_S, dt);
     speed = routeRound(routeDriveRpm);
@@ -1725,7 +1728,7 @@ static uint8_t processNavCommand(const char *command)
 static uint8_t processRouteCommand(const char *command)
 {
     uint8_t start, step, autoRun;
-    uint16_t degrees, rpm, forwardBp, lateralBp, kp100, ki100, kd100;
+    uint16_t degrees, rpm, forwardBp, lateralBp, lateralRpm, kp100, ki100, kd100;
     const char *cursor;
     if (strcmp(command, "pid get") == 0) {
         printHeadingPidStatus();
@@ -1757,11 +1760,21 @@ static uint8_t processRouteCommand(const char *command)
         cursor = command + 11U;
         if (!parseUint(&cursor, &forwardBp) ||
             !parseUint(&cursor, &lateralBp) ||
-            !parseUint(&cursor, &rpm) || *cursor != '\0' ||
+            !parseUint(&cursor, &rpm)) {
+            serialSendString("ERR ROUTE: tune F L T [V]; scales 5000..15000, speeds 10..120rpm\r\n");
+            return 1U;
+        }
+        lateralRpm = routeLateralRpmLimit;
+        if (*cursor == ' ' && !parseUint(&cursor, &lateralRpm)) {
+            serialSendString("ERR ROUTE: tune F L T [V]; scales 5000..15000, speeds 10..120rpm\r\n");
+            return 1U;
+        }
+        if (*cursor != '\0' ||
             forwardBp < 5000U || forwardBp > 15000U ||
             lateralBp < 5000U || lateralBp > 15000U ||
-            rpm < 10U || rpm > 120U) {
-            serialSendString("ERR ROUTE: tune F L T; scales 5000..15000, turn 10..120rpm\r\n");
+            rpm < 10U || rpm > 120U ||
+            lateralRpm < 10U || lateralRpm > 120U) {
+            serialSendString("ERR ROUTE: tune F L T [V]; scales 5000..15000, speeds 10..120rpm\r\n");
             return 1U;
         }
         if (motionMode || routeActive) {
@@ -1771,6 +1784,7 @@ static uint8_t processRouteCommand(const char *command)
         routeForwardScale = forwardBp / 10000.0f;
         routeLateralScale = lateralBp / 10000.0f;
         routeTurnRpmLimit = rpm;
+        routeLateralRpmLimit = lateralRpm;
         serialSendString("OK route tune RAM_only\r\n");
         printRouteStatus();
         return 1U;

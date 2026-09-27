@@ -37,6 +37,7 @@ static uint16_t routeRpm=ROUTE_RPM;
 static float routeLateralScale=ROUTE_LATERAL_SCALE;
 static float routeForwardScale=ROUTE_FORWARD_SCALE;
 static uint16_t routeTurnRpmLimit=(uint16_t)ROUTE_TURN_RPM;
+static uint16_t routeLateralRpmLimit=ROUTE_LATERAL_RPM_MAX;
 static uint8_t routeSentValid;
 static int16_t routeSent[4], staged[4];
 static const uint8_t motorDirections[1][5]={{1,1,0,0,1}};
@@ -157,10 +158,16 @@ int main(void) {
     assert(processRouteCommand("route tune 10200 9000 45") &&
            routeAbs(routeForwardScale-1.02f)<0.0001f &&
            routeAbs(routeLateralScale-0.9f)<0.0001f &&
-           routeTurnRpmLimit==45);
+           routeTurnRpmLimit==45 && routeLateralRpmLimit==60);
+    assert(processRouteCommand("route tune 10200 9000 50 80") &&
+           routeTurnRpmLimit==50 && routeLateralRpmLimit==80);
+    assert(processRouteCommand("route tune 10200 9000 50 121") &&
+           routeLateralRpmLimit==80);
+    assert(processRouteCommand("route tune 10200 9000 45 60") &&
+           routeTurnRpmLimit==45 && routeLateralRpmLimit==60);
     routeActive=1;assert(processRouteCommand("route tune 9000 9000 60") &&
                          routeAbs(routeForwardScale-1.02f)<0.0001f &&
-                         routeTurnRpmLimit==45);
+                         routeTurnRpmLimit==45 && routeLateralRpmLimit==60);
     routeActive=0;
     sendRouteSpeeds(20,0,0);assert(batches==1 && writes==4);
     sendRouteSpeeds(20,0,0);assert(batches==1 && writes==4);
@@ -198,7 +205,7 @@ int main(void) {
     peak=0;
     for(n=0;n<1000 && !routeWaiting;++n) {
         tick();
-        assert(routeAbs(routeRight)<=ROUTE_LATERAL_RPM_MAX);
+        assert(routeAbs(routeRight)<=routeLateralRpmLimit);
         if(routeAbs(routeRight)>peak) peak=(int16_t)routeAbs(routeRight);
     }
     assert(routeWaiting && routeIndex==1 && peak>0);

@@ -12,9 +12,9 @@
 #define ROUTE_LATERAL_SCALE 0.9f
 #define ROUTE_MM_PER_REV    314.159265f /* pi * 100 mm, direct drive G=1 */
 #define ROUTE_RPM           60
-#define ROUTE_LATERAL_RPM_MAX 30U
+#define ROUTE_LATERAL_RPM_MAX 60U
 #define ROUTE_ACCEL_RPM_S   120.0f
-#define ROUTE_TURN_RPM      30.0f
+#define ROUTE_TURN_RPM      45.0f
 #define ROUTE_TURN_ACCEL    90.0f
 /* Initial navigation heading PID gains; tune against measured IMU response. */
 #define ROUTE_HEADING_KP    2.0f
