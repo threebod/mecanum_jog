@@ -12,6 +12,8 @@
 #include "mission_actions.h"
 #include "vision_control.h"
 #include "vision_config.h"
+#include "qr_scan.h"
+#include "tjc_display.h"
 #include "hwt101.h"
 #include "jog_can.h"
 
@@ -156,6 +158,9 @@ static VisionSession visionSession;
 static VisionParser visionParser;
 static volatile VisionPacket visionRxPacket;
 static volatile uint8_t visionRxReady;
+static QrScanParser qrParser;
+static volatile uint8_t qrRxReady;
+static volatile char qrRxPayload[QR_SCAN_PAYLOAD_MAX + 1U];
 static uint8_t visionMotionAutomatic;
 static uint8_t visionPickActive;
 static const VisionCalibration visionPickCalibration = {
@@ -350,6 +355,106 @@ static void visionUartSend(const VisionPacket *packet)
         }
         USART_SendData(UART4, frame[index]);
     }
+}
+
+static void qrUartInit(void)
+{
+    GPIO_InitTypeDef gpio;
+    USART_InitTypeDef uart;
+    NVIC_InitTypeDef nvic;
+    RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOB, ENABLE);
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_USART3, ENABLE);
+    GPIO_PinAFConfig(GPIOB, GPIO_PinSource10, GPIO_AF_USART3);
+    GPIO_PinAFConfig(GPIOB, GPIO_PinSource11, GPIO_AF_USART3);
+    GPIO_StructInit(&gpio);
+    gpio.GPIO_Pin = GPIO_Pin_10 | GPIO_Pin_11;
+    gpio.GPIO_Mode = GPIO_Mode_AF;
+    gpio.GPIO_Speed = GPIO_Speed_50MHz;
+    gpio.GPIO_OType = GPIO_OType_PP;
+    gpio.GPIO_PuPd = GPIO_PuPd_UP;
+    GPIO_Init(GPIOB, &gpio);
+    USART_StructInit(&uart);
+    uart.USART_BaudRate = 115200U;
+    uart.USART_Mode = USART_Mode_Rx | USART_Mode_Tx;
+    USART_Init(USART3, &uart);
+    nvic.NVIC_IRQChannel = USART3_IRQn;
+    nvic.NVIC_IRQChannelPreemptionPriority = 1U;
+    nvic.NVIC_IRQChannelSubPriority = 2U;
+    nvic.NVIC_IRQChannelCmd = ENABLE;
+    NVIC_Init(&nvic);
+    qr_scan_init(&qrParser);
+    qrRxReady = 0U;
+    USART_ITConfig(USART3, USART_IT_RXNE, ENABLE);
+    USART_Cmd(USART3, ENABLE);
+}
+
+static void tjcDisplayInit(void)
+{
+    GPIO_InitTypeDef gpio;
+    USART_InitTypeDef uart;
+
+    RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_USART6, ENABLE);
+    GPIO_PinAFConfig(GPIOC, GPIO_PinSource6, GPIO_AF_USART6);
+    GPIO_PinAFConfig(GPIOC, GPIO_PinSource7, GPIO_AF_USART6);
+    GPIO_StructInit(&gpio);
+    gpio.GPIO_Pin = GPIO_Pin_6 | GPIO_Pin_7;
+    gpio.GPIO_Mode = GPIO_Mode_AF;
+    gpio.GPIO_Speed = GPIO_Speed_50MHz;
+    gpio.GPIO_OType = GPIO_OType_PP;
+    gpio.GPIO_PuPd = GPIO_PuPd_UP;
+    GPIO_Init(GPIOC, &gpio);
+    USART_StructInit(&uart);
+    uart.USART_BaudRate = 115200U;
+    uart.USART_Mode = USART_Mode_Rx | USART_Mode_Tx;
+    USART_Init(USART6, &uart);
+    USART_Cmd(USART6, ENABLE);
+}
+
+static void tjcDisplayQr(const char *result)
+{
+    uint8_t command[TJC_DISPLAY_COMMAND_MAX];
+    uint8_t length = tjc_display_qr_command(result, command);
+    uint8_t index;
+    for (index = 0U; index < length; ++index) {
+        while (USART_GetFlagStatus(USART6, USART_FLAG_TXE) == RESET) {
+        }
+        USART_SendData(USART6, command[index]);
+    }
+}
+
+void USART3_IRQHandler(void)
+{
+    uint8_t byte;
+    char result[QR_SCAN_PAYLOAD_MAX + 1U];
+    uint8_t index;
+    if (USART_GetITStatus(USART3, USART_IT_RXNE) == RESET) return;
+    byte = (uint8_t)USART_ReceiveData(USART3);
+    if (qr_scan_feed(&qrParser, byte, result) && !qrRxReady) {
+        for (index = 0U; result[index] != '\0'; ++index)
+            qrRxPayload[index] = result[index];
+        qrRxPayload[index] = '\0';
+        qrRxReady = 1U;
+    }
+    USART_ClearITPendingBit(USART3, USART_IT_RXNE);
+}
+
+static void serviceQrScan(void)
+{
+    char result[QR_SCAN_PAYLOAD_MAX + 1U];
+    uint8_t index;
+    if (!qrRxReady) return;
+    __disable_irq();
+    for (index = 0U; index <= QR_SCAN_PAYLOAD_MAX; ++index) {
+        result[index] = qrRxPayload[index];
+        if (result[index] == '\0') break;
+    }
+    qrRxReady = 0U;
+    __enable_irq();
+    serialSendString("QR RESULT value=");
+    serialSendString(result);
+    serialSendString("\r\n");
+    tjcDisplayQr(result);
 }
 
 void UART4_IRQHandler(void)
@@ -3081,6 +3186,8 @@ int main(void)
     serialInit();
     hwt101Init(115200U);
     visionUartInit();
+    qrUartInit();
+    tjcDisplayInit();
 
     mechanismStateReset(&mechanismState);
     vision_session_init(&visionSession);
@@ -3129,6 +3236,7 @@ int main(void)
         serviceHostWatchdog();
         serviceMotion();
         serviceVision();
+        serviceQrScan();
         serviceMechanism();
         mechanismActionService();
         serviceRoute();

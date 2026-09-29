@@ -1,16 +1,12 @@
 import time
-import math
 import os
 import gc
 from media.sensor import Sensor
 from media.display import Display
 from media.media import MediaManager
+from machine import FPIOA, UART
 
-from libs.YbProtocol import YbProtocol
-from ybUtils.YbUart import YbUart
-# uart = None
-uart = YbUart(baudrate=115200)
-pto = YbProtocol()
+from qr_protocol import encode_qr_result
 
 
 def init_camera():
@@ -48,12 +44,8 @@ def process_qrcode(image, qr_result):
         # Display QR code content | 显示二维码内容
         image.draw_string_advanced(0, 0, 30, qr_result[0].payload(),
                                  color=(255, 255, 255))
-        print(qr_result[0].payload())
-
-        x, y, w, h = qr_result[0].rect()
-        pto_data = pto.get_qrcode_data(x, y, w, h, qr_result[0].payload())
-        uart.send(pto_data)
-        print(pto_data)
+        return qr_result[0].payload()
+    return None
 
 
 def main():
@@ -63,12 +55,19 @@ def main():
     """
     # Initialize system components | 初始化系统组件
     sensor = init_camera()
+    fpioa = FPIOA()
+    fpioa.set_function(9, FPIOA.UART1_TXD)
+    fpioa.set_function(10, FPIOA.UART1_RXD)
+    uart = UART(UART.UART1, baudrate=115200, bits=UART.EIGHTBITS,
+                parity=UART.PARITY_NONE, stop=UART.STOPBITS_ONE)
     init_display(sensor)
     MediaManager.init()
     sensor.run()
 
     # Initialize FPS clock | 初始化FPS计时器
     clock = time.clock()
+    last_payload = None
+    last_sent_ms = 0
 
     try:
         while True:
@@ -81,7 +80,17 @@ def main():
             qr_codes = img.find_qrcodes()
 
             # Process detection results | 处理检测结果
-            process_qrcode(img, qr_codes)
+            payload = process_qrcode(img, qr_codes)
+            if payload is None:
+                last_payload = None
+            else:
+                now_ms = time.ticks_ms()
+                if payload != last_payload or time.ticks_diff(now_ms, last_sent_ms) >= 1000:
+                    line = encode_qr_result(payload)
+                    if line is not None and uart.write(line) != len(line):
+                        raise RuntimeError("QR UART short write")
+                    last_payload = payload
+                    last_sent_ms = now_ms
 
             # Display result | 显示结果
             Display.show_image(img)
@@ -90,7 +99,10 @@ def main():
     except KeyboardInterrupt:
         print("Program terminated by user")
         # Clean up resources | 清理资源
+    finally:
+        uart.deinit()
         sensor.close()
+        MediaManager.deinit()
         gc.collect()
 
 if __name__ == "__main__":
