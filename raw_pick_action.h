@@ -7,7 +7,7 @@
  * selected color at this sequence's fixed pickup position. */
 static const MechanismInitialState rawPickInitial =
     MECH_INITIAL_STATE(0, 0, 2700, 40, 50, 90, 50, 1200, 1200, 1200,
-                       1, 1, 70, 35, 24, 144, 262);
+                       1, 1, 70, 35, 26, 146, 264);
 
 static const MechanismPose rawPickObservePose =
     { -500, 0, 2700, 40, 50, 90, 50, 1200 };
