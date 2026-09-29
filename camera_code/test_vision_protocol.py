@@ -39,6 +39,15 @@ class VisionProtocolTest(unittest.TestCase):
         self.assertFalse(window.update((100, 80), 150))
         self.assertFalse(window.update((100, 80), 200))
 
+    def test_material_waits_for_half_second_without_motion(self):
+        window = StableWindow(minimum_ms=500)
+        for now, point in [(0, (100, 80)), (100, (100, 80)),
+                           (200, (101, 80)), (300, (100, 80)),
+                           (400, (100, 80))]:
+            self.assertFalse(window.update(point, now))
+        self.assertTrue(window.update((100, 80), 500))
+        self.assertFalse(window.update((104, 80), 600))
+
 
 if __name__ == "__main__":
     unittest.main()

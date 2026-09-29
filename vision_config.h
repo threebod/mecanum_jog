@@ -3,11 +3,11 @@
 
 #include "vision_control.h"
 
-/* Replace the zero matrices with nine-point calibration results, then set
- * calibrated to 1. Keeping them invalid prevents uncalibrated auto motion. */
-static const VisionCalibration visionMaterialCalibration = {
+/* Material scales are rough ring-alignment references. Apply them only after
+ * checking direction and pickup anchor; reset keeps auto motion locked. */
+static VisionCalibration visionMaterialCalibration = {
     0U, {0, 0, 320, 240}, 160, 120,
-    {0.0f, 0.0f, 0.0f, 0.0f}
+    {-0.640f, 0.0f, 0.0f, -0.673f}
 };
 
 static VisionCalibration visionRingCalibration[3] = {

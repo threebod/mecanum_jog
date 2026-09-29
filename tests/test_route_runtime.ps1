@@ -5,7 +5,9 @@ $root = Split-Path -Parent $PSScriptRoot
 $source = Get-Content (Join-Path $root 'main.c') -Raw
 # Compile the actual route state machine with a simulated clock / IMU / motors.
 $service = $source.Substring($source.LastIndexOf('static void sendRouteSpeeds(int16_t forward, int16_t right, int16_t turn)'))
-$service = $service.Substring(0, $service.IndexOf('static void serviceVision('))
+$service = $service.Substring(0, $service.IndexOf('static void serviceRawPickRoute('))
+$mission = $source.Substring($source.IndexOf('static void missionReport('))
+$mission = $mission.Substring(0, $mission.IndexOf('static uint8_t processVisionCommand('))
 $parser = $source.Substring($source.IndexOf('static uint8_t parseUint('))
 $parser = $parser.Substring(0, $parser.IndexOf('static CommandResult parseServoCommand('))
 $pair = $source.Substring($source.IndexOf('static uint8_t parsePair('))
@@ -20,11 +22,33 @@ $prefix = @'
 #include "../route_plan.h"
 #include "../map_navigation.h"
 #include "../straight_control.h"
+#include "../mission_actions.h"
 static uint8_t routeActive,routeWaiting,routeIndex,routeStartZone,routeStep;
 static uint8_t routeAuto,routeRotating,routeOnlyTurn,routeTurnInBand,fullRouteRunning;
+static uint8_t rawPickRouteActive,rawPickAtStation,rawPickItemIndex;
+static uint8_t rawPickMissingReported;
+typedef enum {
+    MISSION_IDLE, MISSION_QR_WAIT, MISSION_RAW_PICK,
+    MISSION_RING_ALIGN, MISSION_TEMP_ALIGN, MISSION_COARSE_PLACE, MISSION_COARSE_PICK,
+    MISSION_TEMP_PLACE, MISSION_RECENTER
+} MissionPhase;
+static uint8_t missionActive,missionActionStarted,missionObservedItem;
+static MissionPhase missionPhase;
+static uint32_t missionDeadline;
+static float missionOffsetForward,missionOffsetRight;
+static MechanismAction missionWorkActions[MISSION_PLACE_COUNT];
+static MechanismAction missionPickBackActions[MISSION_PICK_BACK_COUNT];
+static const MechanismPose missionRingObservePose={-500,0,2700,30,50,90,50,1200};
+static uint16_t mechanismActionIndex,mechanismActionCount;
+static unsigned missionPlaceRuns,missionPickRuns,missionStorageRuns,missionRingAligns;
+static unsigned missionRawItems;
+static uint8_t visionPickActive;
 static uint8_t motionMode,armed,imuValid=1,emergencyStop,jogCanFault;
-static struct {uint8_t running;} mechanismState;
+static MechanismState mechanismState;
 static uint8_t mechanismActionActive;
+static uint8_t servoChannelMoving[3];
+static uint8_t servoChannelEnabled[3]={1,1,1};
+static uint32_t currentAngleMdeg[3]={70000,26000,270000};
 static uint8_t auxMoveMotorId;
 static int8_t routeHeading,routeNextHeading,yawSign=1;
 static float routeX,routeY,routeYaw,routeBaseYaw,imuYaw;
@@ -60,8 +84,30 @@ static uint32_t navLastReport,routeLastReport;
 static unsigned navPosReports,navDoneReports,navInvalidReports;
 static unsigned pidTraceReports;
 static unsigned routePosReports,routeStageReports,routeDoneReports,routeInvalidReports;
+enum {VISION_STATE_IDLE, VISION_STATE_REQUEST, VISION_STATE_ALIGNED};
+#define VISION_MODE_RING 2U
 typedef struct {uint8_t state;} VisionSession;
 static VisionSession visionSession;
+typedef struct {uint8_t calibrated;} VisionCalibration;
+static VisionCalibration visionMaterialCalibration={1};
+static VisionCalibration visionRingCalibration[3]={{1},{1},{1}};
+static uint8_t vision_calibration_valid(const VisionCalibration *calibration) {
+    return calibration->calibrated;
+}
+static uint8_t visionSessionActive(void) {return 0;}
+static void vision_session_init(VisionSession *session) {session->state=0;}
+static uint8_t vision_session_start(VisionSession *session,uint8_t mode,
+        uint8_t selector,uint8_t target,const VisionCalibration *cal,uint32_t now) {
+    (void)mode;(void)selector;(void)target;(void)now;
+    if(!cal->calibrated) return 0;
+    if(mode==VISION_MODE_RING) {
+        assert(target==2 && cal==&visionRingCalibration[1]);
+        assert(mechanismState.current.horizontalDmm==-500);
+    }
+    if(mode==VISION_MODE_RING) ++missionRingAligns;
+    session->state=VISION_STATE_REQUEST;
+    return 1;
+}
 static uint8_t visionMotionAutomatic;
 #define __disable_irq() ((void)0)
 #define __enable_irq() ((void)0)
@@ -88,6 +134,28 @@ static void setAllMotorsEnabled(bool x) {(void)x;}
 static void stopDriveMotors(void) {routeForward=routeRight=commandTurn=0;}
 static void failVision(const char *reason) {(void)reason;motionMode=0;}
 static void printVisionState(void) {}
+static void stopServoMotion(void) {}
+static void startMechanismPose(const MechanismPose *pose) {
+    mechanismState.target=*pose;mechanismState.running=1;
+}
+uint8_t mechanismActionStart(const MechanismInitialState *initial,
+        const MechanismAction *actions,uint16_t count) {
+    (void)initial;(void)actions;
+    if(actions==missionPlaceActions) ++missionPlaceRuns;
+    else if(actions==missionPickBackActions) ++missionPickRuns;
+    else if(actions==missionWorkActions) {
+        assert(visionSession.state==VISION_STATE_ALIGNED);
+        assert(missionRingAligns==2 || missionRingAligns==4);
+        ++missionStorageRuns;
+    }
+    mechanismActionActive=1;mechanismActionIndex=0;mechanismActionCount=count;
+    return 1;
+}
+static uint8_t startVisionMotion(float forward,float right,uint16_t rpm,uint8_t automatic) {
+    (void)rpm;(void)automatic;
+    missionOffsetForward+=forward;missionOffsetRight+=right;
+    motionMode=4;return 1;
+}
 static void vision_session_move_complete(VisionSession *session,uint32_t now) {
     (void)session;(void)now;
 }
@@ -99,6 +167,8 @@ static void invalidateNavigation(const char *reason) {
 static void stopAllMotors(void) {
     routeActive=routeWaiting=routeRotating=routeOnlyTurn=routeTurnInBand=0;
     fullRouteRunning=0;
+    missionActive=missionActionStarted=0;missionPhase=MISSION_IDLE;
+    rawPickRouteActive=rawPickAtStation=rawPickItemIndex=rawPickMissingReported=0;
     routeForward=routeRight=commandTurn=0; armed=0;
     navInitialized=navRunning=navPathCount=0;
     routeDriveRpm=routeTurnRpm=routeCorrection=0;routeSentValid=0;
@@ -117,6 +187,7 @@ static void Emm_V5_Synchronous_motion(uint8_t id) {
 static void Emm_V5_Read_Sys_Params(uint8_t id,int parameter) {
     assert(id==auxMoveMotorId && parameter==S_FLAG);++statusReads;
 }
+static void missionBeginStation(uint8_t nextIndex);
 '@
 $suffix = @'
 static void tick(void) {
@@ -125,6 +196,25 @@ static void tick(void) {
     while(imuYaw>180) imuYaw-=360;
     while(imuYaw<-180) imuYaw+=360;
     clockMs+=20; imuStamp=clockMs; serviceRoute();
+    if(missionActive && routeWaiting) {
+        if((missionPhase==MISSION_RING_ALIGN || missionPhase==MISSION_TEMP_ALIGN) && missionActionStarted==1 &&
+           mechanismState.running) {
+            mechanismState.current=mechanismState.target;
+            mechanismState.running=0;
+        }
+        if(missionPhase==MISSION_RAW_PICK && rawPickItemIndex<3 &&
+           clockMs%200==0) {++rawPickItemIndex;++missionRawItems;}
+        if((missionPhase==MISSION_RING_ALIGN || missionPhase==MISSION_TEMP_ALIGN) && missionActionStarted==2)
+            visionSession.state=VISION_STATE_ALIGNED;
+        if(mechanismActionActive) {
+            mechanismState.current.horizontalDmm=0;
+            mechanismState.current.liftDmm=0;
+            mechanismState.current.turretDdeg=2700;
+            mechanismActionActive=0;mechanismActionIndex=mechanismActionCount;
+        }
+        if(motionMode==4) motionMode=0;
+        serviceMission();
+    }
 }
 int main(void) {
     static const unsigned targetNode[] = {
@@ -197,6 +287,73 @@ int main(void) {
         assert(turnTicks>100);
         assert(routePosReports>0 && routeStageReports==8 && routeDoneReports==1);
     }
+    for(start=1;start<=2;++start) {
+        unsigned qrStarted=0;
+        missionPlaceRuns=missionPickRuns=missionStorageRuns=0;
+        missionRingAligns=missionRawItems=0;
+        stopAllMotors();imuYaw=0;imuStamp=clockMs;armed=1;
+        mechanismState.valid=1;
+        mechanismState.current.horizontalDmm=0;
+        mechanismState.current.liftDmm=0;
+        mechanismState.current.turretDdeg=2700;
+        visionRingCalibration[1].calibrated=0;
+        assert(processRouteCommand("route mission 1") && !routeActive);
+        visionRingCalibration[1].calibrated=1;
+        currentAngleMdeg[0]=35000;
+        assert(processRouteCommand("route mission 1") && !routeActive);
+        currentAngleMdeg[0]=70000;
+        sprintf(cmd,"route mission %u 40",start);
+        assert(processRouteCommand(cmd) && routeActive && missionActive);
+        for(n=0;n<30000 && routeActive;++n) {
+            tick();
+            if(missionPhase==MISSION_QR_WAIT && !qrStarted) qrStarted=clockMs;
+            if(qrStarted && clockMs-qrStarted<980U)
+                assert(routeWaiting && routeIndex==2);
+        }
+        assert(!routeActive && routeDoneReports>0 &&
+               routeX==2250 && routeY==(start==1?2250:150));
+        assert(qrStarted && missionPlaceRuns==2 && missionPickRuns==2 &&
+               missionStorageRuns==2 && missionRingAligns==4 &&
+               missionRawItems==6);
+    }
+    missionBuildStoragePlace(missionWorkActions,2);
+    assert(missionWorkActions[9].pose.liftDmm==880 &&
+           missionWorkActions[18].pose.liftDmm==800 &&
+           missionWorkActions[30].pose.liftDmm==850);
+    stopAllMotors();imuStamp=clockMs;armed=1;
+    assert(processRouteCommand("route mission 1 40") && missionActive);
+    routeWaiting=1;missionPhase=MISSION_RECENTER;
+    missionOffsetForward=45;missionOffsetRight=-30;
+    serviceMission();assert(motionMode==4 && missionOffsetForward==25 &&
+                            missionOffsetRight==-10);
+    motionMode=0;serviceMission();assert(motionMode==4 &&
+                                        missionOffsetForward==5 &&
+                                        missionOffsetRight==0);
+    motionMode=0;serviceMission();assert(motionMode==4 &&
+                                        missionOffsetForward==0);
+    motionMode=0;serviceMission();assert(!routeWaiting && missionActive);
+    routeWaiting=1;missionPhase=MISSION_COARSE_PLACE;
+    missionActionStarted=1;mechanismActionActive=0;
+    mechanismActionCount=MISSION_PLACE_COUNT;mechanismActionIndex=0;
+    n=routeInvalidReports;serviceMission();
+    assert(!missionActive && !routeActive && routeInvalidReports==n+1);
+    stopAllMotors();imuYaw=0;imuStamp=clockMs;armed=1;
+    mechanismState.valid=1;
+    mechanismState.current.turretDdeg=2700;
+    visionMaterialCalibration.calibrated=0;
+    assert(processRouteCommand("route rawpick 1") && !routeActive && armed);
+    visionMaterialCalibration.calibrated=1;
+    assert(processRouteCommand("route rawpick 1") && rawPickRouteActive);
+    for(n=0;n<10000 && !routeWaiting;++n) tick();
+    assert(routeWaiting && rawPickAtStation && routeIndex==4 &&
+           routeX==1200 && routeY==2080 && routeHeading==1);
+    n=batches;
+    for(start=0;start<150;++start) tick();
+    assert(routeWaiting && batches==n && routeX==1200 && routeY==2080);
+    assert(processRouteCommand("route next") && routeWaiting);
+    rawPickItemIndex=3;
+    assert(processRouteCommand("route next") && !routeWaiting && !rawPickRouteActive);
+    stopAllMotors();
     stopAllMotors();imuYaw=0;imuStamp=clockMs;armed=1;
     assert(processRouteCommand("route step 1"));
     for(n=0;n<25;++n) tick();
@@ -321,7 +478,7 @@ int main(void) {
 }
 '@
 $generated = Join-Path $root 'Objects/test_route_runtime.c'
-[IO.File]::WriteAllText($generated, $prefix + "`n" + $parser + "`n" + $pair + "`n" + $service + "`n" + $motion + "`n" + $suffix)
+[IO.File]::WriteAllText($generated, $prefix + "`n" + $parser + "`n" + $pair + "`n" + $service + "`n" + $mission + "`n" + $motion + "`n" + $suffix)
 & 'E:\Qt\Tools\mingw1310_64\bin\gcc.exe' -std=c99 -Wall -Wextra -Werror -Wno-unused-function $generated -o (Join-Path $root 'Objects/test_route_runtime.exe')
 $compileExit = $LASTEXITCODE
 if ($compileExit -ne 0) {throw "Runtime test compile failed: exit $compileExit"}

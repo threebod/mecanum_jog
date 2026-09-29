@@ -64,6 +64,73 @@ int main(void)
     if (!require(fabsf(forward - 5.0f) < 0.001f &&
                      fabsf(right - 1.0f) < 0.001f,
                  "step limit did not preserve direction")) return 1;
+    {
+        VisionCalibration colorGate = {
+            1U, {0, 0, 320, 240}, 160, 120,
+            {0.0f, 0.0f, 0.0f, 0.0f}
+        };
+        VisionSession pickup;
+        uint16_t index;
+        vision_session_init(&pickup);
+        if (!require(vision_session_start(&pickup, VISION_MODE_MATERIAL,
+                                          3U, 0U, &colorGate, 0U),
+                     "color-gated pickup session did not start")) return 1;
+        for (index = 0U; index < 5U; ++index) {
+            vision_session_make_request(&pickup, &colorGate, &request, index);
+            decoded = request;
+            decoded.type = VISION_MESSAGE_RESULT;
+            decoded.flags = 0U;
+            decoded.value[2] = 0;
+            if (!require(vision_session_wait_for_material(&pickup, &decoded) &&
+                         pickup.state == VISION_STATE_REQUEST &&
+                         pickup.misses == 0U,
+                         "absent material must wait without failing")) return 1;
+        }
+        for (index = 0U; index < 3U; ++index) {
+            vision_session_make_request(&pickup, &colorGate, &request,
+                                        (uint32_t)(index + 5U));
+            decoded = request;
+            decoded.type = VISION_MESSAGE_RESULT;
+            decoded.flags = index == 2U ?
+                (VISION_FLAG_VALID | VISION_FLAG_STABLE) : 0U;
+            decoded.value[2] = index == 2U ? 30 : 80;
+            if (!require(vision_session_wait_for_material(&pickup, &decoded) &&
+                         pickup.state == VISION_STATE_REQUEST &&
+                         pickup.misses == 0U,
+                         "unstable or low-quality material must keep waiting"))
+                return 1;
+        }
+        vision_session_make_request(&pickup, &colorGate, &request, 8U);
+        decoded = request;
+        decoded.type = VISION_MESSAGE_RESULT;
+        decoded.token -= 1U;
+        if (!require(!vision_session_wait_for_material(&pickup, &decoded) &&
+                     pickup.state == VISION_STATE_WAIT,
+                     "stale packet must not renew material wait")) return 1;
+        decoded = request;
+        decoded.type = VISION_MESSAGE_RESULT;
+        decoded.flags = 0U;
+        decoded.value[2] = 0;
+        if (!require(vision_session_wait_for_material(&pickup, &decoded),
+                     "current absent packet did not renew material wait")) return 1;
+        for (index = 0U; index < 2U; ++index) {
+            vision_session_make_request(&pickup, &colorGate, &request, index);
+            decoded = request;
+            decoded.type = VISION_MESSAGE_RESULT;
+            decoded.flags = VISION_FLAG_VALID | VISION_FLAG_STABLE;
+            decoded.value[0] = 90;
+            decoded.value[1] = 75;
+            decoded.value[2] = 80;
+            if (!require(!vision_session_wait_for_material(&pickup, &decoded) &&
+                         vision_session_observe(&pickup, &colorGate, &decoded,
+                                                index) ==
+                             (index == 0U ? VISION_EVENT_REQUEST :
+                                            VISION_EVENT_ALIGNED) &&
+                             pickup.forwardMm == 0.0f &&
+                             pickup.rightMm == 0.0f,
+                         "color detection requested chassis motion")) return 1;
+        }
+    }
     calibration.calibrated = 0U;
     if (!require(!vision_calibration_valid(&calibration),
                  "uncalibrated profile was accepted")) return 1;

@@ -45,7 +45,10 @@ typedef enum {
     VISION_STATE_SETTLE,
     VISION_STATE_ALIGNED,
     VISION_STATE_FAILED,
-    VISION_STATE_PAUSED
+    VISION_STATE_PAUSED,
+    VISION_STATE_PREP,
+    VISION_STATE_PICK,
+    VISION_STATE_PICK_DONE
 } VisionState;
 
 typedef enum {
@@ -248,6 +251,21 @@ static VisionEvent vision_session_miss(VisionSession *session,
     }
     session->state = VISION_STATE_REQUEST;
     return VISION_EVENT_REQUEST;
+}
+
+static uint8_t vision_session_wait_for_material(VisionSession *session,
+                                                const VisionPacket *packet)
+{
+    if (session->state != VISION_STATE_WAIT ||
+        packet->type != VISION_MESSAGE_RESULT || packet->token != session->token ||
+        packet->mode != VISION_MODE_MATERIAL || packet->mode != session->mode ||
+        packet->selector != session->selector || packet->target != session->target ||
+        ((packet->flags & (VISION_FLAG_VALID | VISION_FLAG_STABLE)) ==
+             (VISION_FLAG_VALID | VISION_FLAG_STABLE) && packet->value[2] >= 60))
+        return 0U;
+    session->state = VISION_STATE_REQUEST;
+    session->misses = session->confirmations = 0U;
+    return 1U;
 }
 
 static VisionEvent vision_session_observe(VisionSession *session,

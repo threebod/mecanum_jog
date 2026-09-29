@@ -4,7 +4,7 @@ import time
 from maix import app, camera, display, err, gpio, image, pinmap, uart
 
 from vision_detectors import find_material, find_ring
-from vision_protocol import (FLAG_STABLE, FLAG_VALID, KIND_RESULT, MODE_RING,
+from vision_protocol import (FLAG_STABLE, FLAG_VALID, KIND_RESULT, MODE_MATERIAL, MODE_RING,
                              Parser, StableWindow, encode, validate_request)
 import vision_settings as settings
 
@@ -36,7 +36,8 @@ def main():
                     request = packet
                     request_started = now_ms
                     discard_frames = 2
-                    stable.reset()
+                    stable = StableWindow(minimum_ms=500 if packet["mode"] == MODE_MATERIAL
+                                          else 180)
             frame = cam.read()
             found = None
             if request is not None and frame is not None:
@@ -46,7 +47,8 @@ def main():
                     found = (find_ring(frame, request) if request["mode"] == MODE_RING
                              else find_material(frame, request))
                 confirmed = stable.update(found, now_ms)
-                if confirmed or now_ms - request_started >= 1000:
+                timeout_ms = 1200 if request["mode"] == MODE_MATERIAL else 1000
+                if confirmed or now_ms - request_started >= timeout_ms:
                     values = [0] * 8
                     if found is not None:
                         values[:5] = found
