@@ -14,6 +14,8 @@ $pair = $source.Substring($source.IndexOf('static uint8_t parsePair('))
 $pair = $pair.Substring(0, $pair.IndexOf('static void printMechanismPose('))
 $motion = $source.Substring($source.LastIndexOf('static void serviceMotion(void)'))
 $motion = $motion.Substring(0, $motion.IndexOf('static uint8_t parsePair('))
+$calibration = $source.Substring($source.IndexOf('static const VisionCalibration *visionCalibration(void)'))
+$calibration = $calibration.Substring(0, $calibration.IndexOf('static const char *visionStateName('))
 $prefix = @'
 #include <assert.h>
 #include <stdio.h>
@@ -27,6 +29,7 @@ static uint8_t routeActive,routeWaiting,routeIndex,routeStartZone,routeStep;
 static uint8_t routeAuto,routeRotating,routeOnlyTurn,routeTurnInBand,fullRouteRunning;
 static uint8_t rawPickRouteActive,rawPickAtStation,rawPickItemIndex;
 static uint8_t rawPickMissingReported;
+static const uint8_t rawPickColors[2][3]={{4,2,6},{5,1,3}};
 typedef enum {
     MISSION_IDLE, MISSION_QR_WAIT, MISSION_RAW_PICK,
     MISSION_RING_ALIGN, MISSION_TEMP_ALIGN, MISSION_COARSE_PLACE, MISSION_COARSE_PICK,
@@ -40,7 +43,7 @@ static MechanismAction missionWorkActions[MISSION_PLACE_COUNT];
 static MechanismAction missionPickBackActions[MISSION_PICK_BACK_COUNT];
 static const MechanismPose missionRingObservePose={-500,0,2700,30,50,90,50,1200};
 static uint16_t mechanismActionIndex,mechanismActionCount;
-static unsigned missionPlaceRuns,missionPickRuns,missionStorageRuns,missionRingAligns;
+static unsigned missionPlaceRuns,missionPickRuns,missionStorageRuns,missionRingAligns,missionMaterialAligns;
 static unsigned missionRawItems;
 static uint8_t visionPickActive;
 static uint8_t motionMode,armed,imuValid=1,emergencyStop,jogCanFault;
@@ -55,6 +58,7 @@ static float routeX,routeY,routeYaw,routeBaseYaw,imuYaw;
 static float routeDriveRpm,routeTurnRpm,routeCorrection;
 static uint32_t headingPidLastReport;
 static RouteHeadingPid routeHeadingPid;
+static RouteTurnPid routeTurnPid;
 static RouteHeadingPidGains routeHeadingGains={
     ROUTE_HEADING_KP,ROUTE_HEADING_KI,ROUTE_HEADING_KD};
 static uint16_t routeRpm=ROUTE_RPM;
@@ -84,12 +88,15 @@ static uint32_t navLastReport,routeLastReport;
 static unsigned navPosReports,navDoneReports,navInvalidReports;
 static unsigned pidTraceReports;
 static unsigned routePosReports,routeStageReports,routeDoneReports,routeInvalidReports;
-enum {VISION_STATE_IDLE, VISION_STATE_REQUEST, VISION_STATE_ALIGNED};
+enum {VISION_STATE_IDLE, VISION_STATE_REQUEST, VISION_STATE_ALIGNED,
+      VISION_STATE_PICK, VISION_STATE_PICK_DONE};
 #define VISION_MODE_RING 2U
-typedef struct {uint8_t state;} VisionSession;
+#define VISION_MODE_MATERIAL 1U
+typedef struct {uint8_t state,waitForTarget,mode,target;} VisionSession;
 static VisionSession visionSession;
 typedef struct {uint8_t calibrated;} VisionCalibration;
 static VisionCalibration visionMaterialCalibration={1};
+static VisionCalibration visionPickCalibration={1};
 static VisionCalibration visionRingCalibration[3]={{1},{1},{1}};
 static uint8_t vision_calibration_valid(const VisionCalibration *calibration) {
     return calibration->calibrated;
@@ -103,9 +110,17 @@ static uint8_t vision_session_start(VisionSession *session,uint8_t mode,
     if(mode==VISION_MODE_RING) {
         assert(target==2 && cal==&visionRingCalibration[1]);
         assert(mechanismState.current.horizontalDmm==-500);
+        assert(missionPhase!=MISSION_TEMP_ALIGN || routeIndex==7);
+    } else {
+        assert(mode==VISION_MODE_MATERIAL && selector==4 && target==2);
+        assert(missionPhase==MISSION_TEMP_ALIGN && routeIndex==12);
+        assert(cal==&visionRingCalibration[1]);
+        assert(mechanismState.current.horizontalDmm==-500);
+        ++missionMaterialAligns;
     }
     if(mode==VISION_MODE_RING) ++missionRingAligns;
     session->state=VISION_STATE_REQUEST;
+    session->mode=mode;session->target=target;
     return 1;
 }
 static uint8_t visionMotionAutomatic;
@@ -141,11 +156,21 @@ static void startMechanismPose(const MechanismPose *pose) {
 uint8_t mechanismActionStart(const MechanismInitialState *initial,
         const MechanismAction *actions,uint16_t count) {
     (void)initial;(void)actions;
-    if(actions==missionPlaceActions) ++missionPlaceRuns;
-    else if(actions==missionPickBackActions) ++missionPickRuns;
+    if(actions==missionCoarsePlaceActions) {
+        assert(initial==&missionCoarseInitial && count==MISSION_COARSE_PLACE_COUNT);
+        ++missionPlaceRuns;
+    } else if(actions==missionPickBackActions) {
+        assert(initial==&missionCoarseInitial && count==MISSION_PICK_BACK_COUNT);
+        assert(mechanismState.current.horizontalDmm==50 &&
+               mechanismState.current.turretDdeg==3080);
+        assert(actions[0].value==3 && actions[10].value==1 && actions[20].value==2);
+        ++missionPickRuns;
+    }
     else if(actions==missionWorkActions) {
+        assert(initial==&missionInitial && count==MISSION_PLACE_COUNT);
         assert(visionSession.state==VISION_STATE_ALIGNED);
-        assert(missionRingAligns==2 || missionRingAligns==4);
+        assert(missionRingAligns+missionMaterialAligns==2 ||
+               missionRingAligns+missionMaterialAligns==4);
         ++missionStorageRuns;
     }
     mechanismActionActive=1;mechanismActionIndex=0;mechanismActionCount=count;
@@ -204,16 +229,22 @@ static void tick(void) {
         }
         if(missionPhase==MISSION_RAW_PICK && rawPickItemIndex<3 &&
            clockMs%200==0) {++rawPickItemIndex;++missionRawItems;}
-        if((missionPhase==MISSION_RING_ALIGN || missionPhase==MISSION_TEMP_ALIGN) && missionActionStarted==2)
+        if((missionPhase==MISSION_RING_ALIGN || missionPhase==MISSION_TEMP_ALIGN) && missionActionStarted==2) {
+            assert(visionSession.waitForTarget);
+            assert(visionCalibration()==&visionRingCalibration[1]);
+            missionOffsetForward=45;missionOffsetRight=-30;
             visionSession.state=VISION_STATE_ALIGNED;
+        }
         if(mechanismActionActive) {
-            mechanismState.current.horizontalDmm=0;
+            mechanismState.current.horizontalDmm=missionPhase==MISSION_COARSE_PLACE ? 50 : 0;
             mechanismState.current.liftDmm=0;
-            mechanismState.current.turretDdeg=2700;
+            mechanismState.current.turretDdeg=missionPhase==MISSION_COARSE_PLACE ? 3080 : 2700;
             mechanismActionActive=0;mechanismActionIndex=mechanismActionCount;
         }
         if(motionMode==4) motionMode=0;
         serviceMission();
+        if(missionPhase==MISSION_COARSE_PLACE || missionPhase==MISSION_TEMP_PLACE)
+            assert(missionOffsetForward==0 && missionOffsetRight==0 && motionMode==0);
     }
 }
 int main(void) {
@@ -257,10 +288,10 @@ int main(void) {
     assert(processRouteCommand("route tune 10200 9000 45") &&
            routeAbs(routeForwardScale-1.02f)<0.0001f &&
            routeAbs(routeLateralScale-0.9f)<0.0001f &&
-           routeTurnRpmLimit==45 && routeLateralRpmLimit==60);
+           routeTurnRpmLimit==45 && routeLateralRpmLimit==ROUTE_LATERAL_RPM_MAX);
     assert(processRouteCommand("route tune 10200 9000 50 80") &&
            routeTurnRpmLimit==50 && routeLateralRpmLimit==80);
-    assert(processRouteCommand("route tune 10200 9000 50 121") &&
+    assert(processRouteCommand("route tune 10200 9000 50 251") &&
            routeLateralRpmLimit==80);
     assert(processRouteCommand("route tune 10200 9000 45 60") &&
            routeTurnRpmLimit==45 && routeLateralRpmLimit==60);
@@ -268,6 +299,10 @@ int main(void) {
                          routeAbs(routeForwardScale-1.02f)<0.0001f &&
                          routeTurnRpmLimit==45 && routeLateralRpmLimit==60);
     routeActive=0;
+    assert(processRouteCommand("route tune 10200 9000 250 250") &&
+           routeTurnRpmLimit==250 && routeLateralRpmLimit==250);
+    assert(processRouteCommand("route tune 10200 9000 230 150") &&
+           routeTurnRpmLimit==230 && routeLateralRpmLimit==150);
     sendRouteSpeeds(20,0,0);assert(batches==1 && writes==4);
     sendRouteSpeeds(20,0,0);assert(batches==1 && writes==4);
     sendRouteSpeeds(0,20,0);assert(batches==2 && writes==8);
@@ -290,7 +325,7 @@ int main(void) {
     for(start=1;start<=2;++start) {
         unsigned qrStarted=0;
         missionPlaceRuns=missionPickRuns=missionStorageRuns=0;
-        missionRingAligns=missionRawItems=0;
+        missionRingAligns=missionMaterialAligns=missionRawItems=0;
         stopAllMotors();imuYaw=0;imuStamp=clockMs;armed=1;
         mechanismState.valid=1;
         mechanismState.current.horizontalDmm=0;
@@ -313,16 +348,33 @@ int main(void) {
         assert(!routeActive && routeDoneReports>0 &&
                routeX==2250 && routeY==(start==1?2250:150));
         assert(qrStarted && missionPlaceRuns==2 && missionPickRuns==2 &&
-               missionStorageRuns==2 && missionRingAligns==4 &&
+               missionStorageRuns==2 && missionRingAligns==3 && missionMaterialAligns==1 &&
                missionRawItems==6);
     }
     missionBuildStoragePlace(missionWorkActions,2);
-    assert(missionWorkActions[9].pose.liftDmm==880 &&
-           missionWorkActions[18].pose.liftDmm==800 &&
-           missionWorkActions[30].pose.liftDmm==850);
+    assert(missionWorkActions[8].pose.liftDmm==880 &&
+           missionWorkActions[17].pose.liftDmm==800 &&
+           missionWorkActions[29].pose.liftDmm==850);
     stopAllMotors();imuStamp=clockMs;armed=1;
     assert(processRouteCommand("route mission 1 40") && missionActive);
-    routeWaiting=1;missionPhase=MISSION_RECENTER;
+    routeWaiting=1;routeIndex=9;missionBeginStation(9);
+    visionSession.state=VISION_STATE_PICK;visionPickActive=1;
+    mechanismActionActive=1;
+    clockMs=missionDeadline+1000;imuStamp=clockMs;
+    serviceMission();
+    assert(missionActive && routeActive && mechanismActionActive);
+    clockMs+=10000;imuStamp=clockMs;serviceMission();
+    assert(missionActive && routeActive); /* slow pickup is not an absent material */
+    rawPickItemIndex=1;visionPickActive=mechanismActionActive=0;
+    visionSession.state=VISION_STATE_PICK_DONE;serviceMission();
+    assert(missionActive && missionObservedItem==1 && missionDeadline==clockMs+30000);
+    clockMs=missionDeadline-1;imuStamp=clockMs;serviceMission();
+    assert(missionActive);
+    clockMs+=1;imuStamp=clockMs;serviceMission();
+    assert(!missionActive && !routeActive); /* next absent color still times out */
+    stopAllMotors();imuStamp=clockMs;armed=1;
+    assert(processRouteCommand("route mission 1 40") && missionActive);
+    routeWaiting=1;routeIndex=4;missionPhase=MISSION_RECENTER;
     missionOffsetForward=45;missionOffsetRight=-30;
     serviceMission();assert(motionMode==4 && missionOffsetForward==25 &&
                             missionOffsetRight==-10);
@@ -400,9 +452,9 @@ int main(void) {
             assert(processNavCommand(cmd) && navInitialized &&
                    navCurrentNode==navStartNode((uint8_t)start));
             armed=1;navPosReports=navDoneReports=0;
-            sprintf(cmd,"nav goto %d %d 120",destination.x,destination.y);
+            sprintf(cmd,"nav goto %d %d 250",destination.x,destination.y);
             assert(processNavCommand(cmd) && navRunning);
-            assert(routeRpm==120);
+            assert(routeRpm==250);
             for(n=0;n<12000 && navRunning;++n) tick();
             assert(navInitialized && !navRunning && navCurrentNode==targetNode[target]);
             assert(routeX==destination.x && routeY==destination.y);
@@ -435,9 +487,9 @@ int main(void) {
     armed=1;assert(processNavCommand("nav goto 1800 300 120") && navRunning);
     for(n=0;n<12000 && navRunning;++n) tick();
     assert(navInitialized && !navRunning && routeX==1800 && routeY==300);
-    armed=1;imuStamp=clockMs;assert(processRouteCommand("route auto 1 120") && routeRpm==120);
+    armed=1;imuStamp=clockMs;assert(processRouteCommand("route auto 1 250") && routeRpm==250);
     stopAllMotors();armed=1;imuStamp=clockMs;
-    assert(processRouteCommand("route auto 1 121") && !routeActive);
+    assert(processRouteCommand("route auto 1 251") && !routeActive);
     for(sign=-1;sign<=1;sign+=2) {
         stopAllMotors(); straightLateral=1;straightDirection=(int16_t)sign;
         straightRpm=60;motionDuration=2000;motionStart=lastControl=clockMs;
@@ -473,12 +525,29 @@ int main(void) {
         imuYaw=routeYaw-(n%2?1.9f:2.1f);clockMs+=20;imuStamp=clockMs;serviceRoute();
     }
     assert(!routeActive && batches==(unsigned)previous);
+    for(sign=-1;sign<=1;sign+=2) for(start=0;start<2;++start) {
+        float physicalYaw=179.0f, physicalTurn=0.0f, overshoot=0.0f;
+        stopAllMotors();imuYaw=physicalYaw;imuStamp=clockMs;yawSign=(int8_t)sign;armed=1;
+        assert(processRouteCommand(start ? "turn L 90" : "turn R 90"));
+        for(n=0;n<1200 && routeActive;++n) {
+            float progress;
+            physicalTurn+=(commandTurn-physicalTurn)*20.0f/(180.0f+20.0f);
+            physicalYaw+=physicalTurn*1.3955f*0.020f*yawSign;
+            clockMs+=20;
+            if(n%3==0) {imuYaw=physicalYaw;imuStamp=clockMs;}
+            progress=(physicalYaw-179.0f)*(start?1.0f:-1.0f)*yawSign;
+            if(progress-90.0f>overshoot) overshoot=progress-90.0f;
+            serviceRoute();
+        }
+        assert(!routeActive && overshoot<3.5f);
+        assert(routeAbs(headingError(routeYaw,physicalYaw))<3.5f);
+    }
     puts("PASS: routes, optimized motion and navigation runtime checks");
     return 0;
 }
 '@
 $generated = Join-Path $root 'Objects/test_route_runtime.c'
-[IO.File]::WriteAllText($generated, $prefix + "`n" + $parser + "`n" + $pair + "`n" + $service + "`n" + $mission + "`n" + $motion + "`n" + $suffix)
+[IO.File]::WriteAllText($generated, $prefix + "`n" + $parser + "`n" + $pair + "`n" + $service + "`n" + $calibration + "`n" + $mission + "`n" + $motion + "`n" + $suffix)
 & 'E:\Qt\Tools\mingw1310_64\bin\gcc.exe' -std=c99 -Wall -Wextra -Werror -Wno-unused-function $generated -o (Join-Path $root 'Objects/test_route_runtime.exe')
 $compileExit = $LASTEXITCODE
 if ($compileExit -ne 0) {throw "Runtime test compile failed: exit $compileExit"}

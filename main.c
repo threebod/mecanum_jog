@@ -79,6 +79,9 @@ static volatile uint8_t servoChannelMoving[3];
 static volatile uint8_t completedServoChannels;
 static volatile uint32_t currentAngleMdeg[3];
 static volatile uint32_t targetAngleMdeg[3];
+static volatile uint32_t turretStartAngleMdeg;
+static volatile uint32_t turretElapsedMs;
+static volatile uint32_t turretDurationMs;
 static volatile uint32_t servoStepMdeg[3] = {
     SERVO_STEP_MDEG, SERVO_STEP_MDEG, SERVO_STEP_MDEG
 };
@@ -107,7 +110,7 @@ static uint8_t fullRouteRunning;
 static uint8_t rawPickRouteActive, rawPickAtStation, rawPickItemIndex;
 static uint8_t rawPickMissingReported;
 static MechanismAction rawPickRouteActions[RAW_PICK_ACTION_COUNT];
-static const uint8_t rawPickColors[3] = {4U, 2U, 6U};
+static const uint8_t rawPickColors[2][3] = {{4U, 2U, 6U}, {5U, 1U, 3U}};
 typedef enum {
     MISSION_IDLE, MISSION_QR_WAIT, MISSION_RAW_PICK,
     MISSION_RING_ALIGN, MISSION_TEMP_ALIGN, MISSION_COARSE_PLACE, MISSION_COARSE_PICK,
@@ -132,6 +135,7 @@ static uint32_t navLastReport, routeLastReport;
 static float routeDriveRpm, routeTurnRpm, routeCorrection;
 static uint32_t headingPidLastReport;
 static RouteHeadingPid routeHeadingPid;
+static RouteTurnPid routeTurnPid;
 static RouteHeadingPidGains routeHeadingGains = {
     ROUTE_HEADING_KP, ROUTE_HEADING_KI, ROUTE_HEADING_KD
 };
@@ -149,6 +153,8 @@ static void sendRouteSpeeds(int16_t forward, int16_t right, int16_t turn);
 static void printHeadingPidTrace(float targetYaw, float actualYaw, int16_t turn);
 static void serialSendString(const char *text);
 static MechanismState mechanismState;
+static uint32_t mechanismLastStatusPoll;
+static uint8_t mechanismStatusSeen, mechanismLastStatus[2];
 static const MechanismInitialState *mechanismActionInitial;
 static const MechanismAction *mechanismActions;
 static uint16_t mechanismActionCount, mechanismActionIndex;
@@ -502,6 +508,7 @@ static void stopAllMotors(void)
     }
     visionPickActive = 0U;
     invalidateMechanism("stopped");
+    jogCanResetAuxStatus();
     mechanismActionActive = 0U;
     motionMode = 0U;
     straightUseRoutePid = 0U;
@@ -580,12 +587,12 @@ static void printHelp(void)
     serialSendString("  route next       continue from a stopped checkpoint\r\n");
     serialSendString("  route status     estimated position / checkpoint\r\n");
     serialSendString("  route tune F L T [V]  scales, turn and lateral RPM limit, RAM only\r\n");
-    serialSendString("  route auto 1|2 [rpm]   full route; rpm 10..120 (arm)\r\n");
+    serialSendString("  route auto 1|2 [rpm]   full route; rpm 10..250 (arm)\r\n");
     serialSendString("  route rawpick 1|2 [rpm]  stop at RAW_1, pick green/yellow/light blue (arm)\r\n");
     serialSendString("  route mission 1|2 [rpm]  two-round pickup/place mission (arm)\r\n");
     serialSendString("  turn L|R 1..180  relative IMU turn in clear space (arm)\r\n");
     serialSendString("  nav init 1|2       set estimated start pose; fresh IMU, idle\r\n");
-    serialSendString("  nav goto X Y [rpm] safe-corridor target; rpm 10..120 (arm)\r\n");
+    serialSendString("  nav goto X Y [rpm] safe-corridor target; rpm 10..250 (arm)\r\n");
     serialSendString("  nav status         estimated navigation state\r\n");
     serialSendString("  pid get            read navigation heading PID (x100)\r\n");
     serialSendString("  pid set KP KI KD   set RAM gains while stopped (x100)\r\n");
@@ -774,6 +781,13 @@ static uint8_t servoSetTargetMdeg(uint8_t channel, uint32_t target,
     }
 
     __disable_irq();
+    if (channel == 4U) {
+        uint32_t current = currentAngleMdeg[index];
+        uint32_t delta = target > current ? target - current : current - target;
+        turretStartAngleMdeg = current;
+        turretElapsedMs = 0U;
+        turretDurationMs = turretMotionDurationMs(delta, speedDps10);
+    }
     targetAngleMdeg[index] = target;
     servoStepMdeg[index] = step;
     servoChannelMoving[index] = currentAngleMdeg[index] != target;
@@ -904,7 +918,11 @@ void TIM2_IRQHandler(void)
         }
         current = currentAngleMdeg[index];
         target = targetAngleMdeg[index];
-        if (current < target) {
+        if (index == 2U) {
+            turretElapsedMs += 20U;
+            current = turretMotionAngleMdeg(turretStartAngleMdeg, target,
+                                            turretElapsedMs, turretDurationMs);
+        } else if (current < target) {
             current = target - current <= servoStepMdeg[index] ?
                       target : current + servoStepMdeg[index];
         } else {
@@ -914,7 +932,8 @@ void TIM2_IRQHandler(void)
         currentAngleMdeg[index] = current;
         servoSetPulse((uint8_t)(index + 2U),
                       servoAngleToPulse((uint8_t)(index + 2U), current));
-        if (current == target) {
+        if (current == target &&
+            (index != 2U || turretElapsedMs >= turretDurationMs)) {
             servoChannelMoving[index] = 0U;
             completedServoChannels |= (uint8_t)(1U << index);
         }
@@ -965,8 +984,11 @@ static uint8_t visionSessionActive(void)
 
 static const VisionCalibration *visionCalibration(void)
 {
-    if (visionPickActive) return rawPickAtStation ?
+    if (visionPickActive) return rawPickAtStation && rawPickItemIndex == 0U ?
         &visionMaterialCalibration : &visionPickCalibration;
+    if (missionActive && missionPhase == MISSION_TEMP_ALIGN && routeIndex == 12U) {
+        return &visionRingCalibration[1];
+    }
     if (visionSession.mode == VISION_MODE_MATERIAL) {
         return &visionMaterialCalibration;
     }
@@ -974,6 +996,11 @@ static const VisionCalibration *visionCalibration(void)
         return &visionRingCalibration[visionSession.target - 1U];
     }
     return (const VisionCalibration *)0;
+}
+
+static uint8_t rawPickColor(uint8_t item)
+{
+    return rawPickColors[missionActive && routeIndex >= 9U ? 1U : 0U][item];
 }
 
 static const char *visionStateName(VisionState state)
@@ -1033,7 +1060,7 @@ static void failVision(const char *reason)
     uint8_t wasMission = missionActive;
     uint8_t slot = rawPickItemIndex < 3U ?
         (uint8_t)(rawPickItemIndex + 1U) : 3U;
-    uint8_t color = wasRawPick ? rawPickColors[slot - 1U] : 0U;
+    uint8_t color = wasRawPick ? rawPickColor((uint8_t)(slot - 1U)) : 0U;
     if (visionPickActive || wasMission) {
         stopServoMotion();
         stopAllMotors();
@@ -1270,14 +1297,16 @@ static void startMechanismPose(const MechanismPose *target)
         serialSendString("ERR MECH: invalid or busy pose\r\n");
         return;
     }
+    jogCanResetAuxStatus();
     setAuxMotorsEnabled(true);
-    if (motionInterrupted()) { stopAllMotors(); return; }
+    mechanismStatusSeen = 0U;
+    if (motionInterrupted()) { stopServoMotion(); stopAllMotors(); return; }
     if (horizontalPulses != 0U) {
         Emm_V5_Pos_Control(6U, horizontalDelta > 0 ? 0U : 1U,
                            target->horizontalRpm, target->horizontalAccel,
                            horizontalPulses, false, true);
     }
-    if (motionInterrupted()) { stopAllMotors(); return; }
+    if (motionInterrupted()) { stopServoMotion(); stopAllMotors(); return; }
     if (liftPulses != 0U) {
         Emm_V5_Pos_Control(5U, liftDelta > 0 ? 0U : 1U,
                            target->liftRpm, target->liftAccel,
@@ -1285,8 +1314,10 @@ static void startMechanismPose(const MechanismPose *target)
     }
     servoSetTargetMdeg(4U, (uint32_t)target->turretDdeg * 100U,
                        target->turretDps10);
-    if (motionInterrupted()) { stopAllMotors(); return; }
+    if (motionInterrupted()) { stopServoMotion(); stopAllMotors(); return; }
     Emm_V5_Synchronous_motion(0x00);
+    if (motionInterrupted()) { stopServoMotion(); stopAllMotors(); return; }
+    mechanismLastStatusPoll = clockMs - AUX_MOVE_STATUS_POLL_MS;
     printMechanismPose("MECH RUN", target);
 }
 
@@ -1342,12 +1373,72 @@ static uint8_t processMechanismCommand(const char *commandText)
 
 static void serviceMechanism(void)
 {
-    uint8_t event = mechanismStateService(&mechanismState, clockMs);
+    uint8_t id, status, event, waiting;
+    if (!mechanismState.running) return;
+    if (motionInterrupted()) {
+        stopServoMotion();
+        stopAllMotors();
+        return;
+    }
+    for (id = 5U; id <= 6U; ++id) {
+        uint8_t bit = (uint8_t)(1U << (id - 5U));
+        if ((mechanismState.pendingMotors & bit) &&
+            jogCanTakeAuxStatus(id, &status)) {
+            if (!(mechanismStatusSeen & bit) || mechanismLastStatus[id - 5U] != status) {
+                serialSendString("MECH MOTOR id=");
+                serialSendUint(id);
+                serialSendString(" status=0x");
+                serialSendHex8(status);
+                serialSendString("\r\n");
+            }
+            mechanismStatusSeen |= bit;
+            mechanismLastStatus[id - 5U] = status;
+            if (status & 0x02U) mechanismState.pendingMotors &= (uint8_t)~bit;
+        }
+    }
+    waiting = mechanismState.pendingMotors;
+    event = mechanismStateService(&mechanismState, clockMs, servoChannelMoving[2]);
     if (event == MECHANISM_EVENT_POSITION) {
         printMechanismPose("MECH POS", &mechanismState.current);
     } else if (event == MECHANISM_EVENT_DONE) {
+        jogCanResetAuxStatus();
         stopAuxMotors();
         printMechanismPose("MECH DONE", &mechanismState.current);
+    } else if (event == MECHANISM_EVENT_TIMEOUT) {
+        stopServoMotion();
+        stopAllMotors();
+        for (id = 5U; id <= 6U; ++id) {
+            uint8_t bit = (uint8_t)(1U << (id - 5U));
+            if (waiting & bit) {
+                serialSendString("MECH TIMEOUT motor=");
+                serialSendUint(id);
+                serialSendString(" received=");
+                serialSendUint((mechanismStatusSeen & bit) != 0U);
+                if (mechanismStatusSeen & bit) {
+                    serialSendString(" status=0x");
+                    serialSendHex8(mechanismLastStatus[id - 5U]);
+                }
+                serialSendString("\r\n");
+            }
+        }
+        if (waiting == 0U) serialSendString("MECH TIMEOUT servo=4\r\n");
+        serialSendString("ERR MECH: arrival status timeout; stopped\r\n");
+        return;
+    }
+    if (mechanismState.running &&
+        clockMs - mechanismLastStatusPoll >= AUX_MOVE_STATUS_POLL_MS) {
+        mechanismLastStatusPoll = clockMs;
+        for (id = 5U; id <= 6U; ++id) {
+            if (mechanismState.pendingMotors & (1U << (id - 5U))) {
+                jogCanExpectAuxStatus(id);
+                Emm_V5_Read_Sys_Params(id, S_FLAG);
+                if (motionInterrupted()) {
+                    stopServoMotion();
+                    stopAllMotors();
+                    return;
+                }
+            }
+        }
     }
 }
 
@@ -1400,6 +1491,14 @@ void mechanismActionService(void)
     }
     action = &mechanismActions[mechanismActionIndex];
     if (!mechanismActionDispatched) {
+        /* Only tray descent depends on platform arrival. Other poses overlap. */
+        if (action->type == MECHANISM_ACTION_POSE &&
+            action->pose.horizontalDmm == -500 && action->pose.turretDdeg == 1320U &&
+            action->pose.liftDmm > mechanismState.current.liftDmm &&
+            servoChannelMoving[1]) return;
+        if ((action->type == MECHANISM_ACTION_PLATFORM ||
+             (action->type == MECHANISM_ACTION_SERVO && action->channel == 3U)) &&
+            servoChannelMoving[1]) return;
         if (action->type == MECHANISM_ACTION_POSE) {
             startMechanismPose(&action->pose);
         } else if (action->type == MECHANISM_ACTION_GRIPPER) {
@@ -1442,7 +1541,8 @@ void mechanismActionService(void)
     if ((action->type == MECHANISM_ACTION_GRIPPER ||
          action->type == MECHANISM_ACTION_PLATFORM ||
          action->type == MECHANISM_ACTION_SERVO) &&
-        servoChannelMoving[action->channel - 2U]) return;
+        servoChannelMoving[action->channel - 2U] &&
+        !(action->channel == 3U && action->waitMs == 0U)) return;
     mechanismActionCompleteStep(action->waitMs);
 }
 
@@ -1645,7 +1745,7 @@ static uint8_t processAuxMoveCommand(const char *command)
     auxMoveMotorId = (uint8_t)motorId;
     motionStart = clockMs;
     lastControl = clockMs;
-    motionDuration = mechanismMotorDurationMs(pulses, rpm) * 2U +
+    motionDuration = mechanismMotorDurationMs(pulses, rpm, (uint8_t)accel) * 2U +
                      AUX_MOVE_TIMEOUT_MARGIN_MS;
     serialSendString("TX queued: auxmove motor=");
     serialSendUint(motorId);
@@ -1920,10 +2020,10 @@ static void serviceRoute(void)
         /* Separate enter/exit thresholds prevent stop/start chatter at 2deg. */
         if (!routeTurnInBand && routeAbs(error) <= 2.0f) routeTurnInBand = 1U;
         if (routeTurnInBand && routeAbs(error) > 3.5f) routeTurnInBand = 0U;
-        routeTurnRpm = routeSlew(routeTurnRpm,
-            routeTurnInBand ? 0.0f :
-            (float)routeTurnSpeedLimited(error, yawSign, routeTurnRpmLimit),
-            ROUTE_TURN_ACCEL, dt);
+        pidTurn = routeTurnPidStep(&routeTurnPid, error, sampleMs,
+                                   routeTurnRpmLimit, yawSign);
+        routeTurnRpm = routeTurnRamp(routeTurnRpm,
+                                    routeTurnInBand ? 0.0f : pidTurn, dt);
         sendRouteSpeeds(0, 0, routeRound(routeTurnRpm));
         if (routeTurnInBand && routeRound(routeTurnRpm) == 0) {
             if (routeTurnInBand == 1U) { routeTurnStable = now; routeTurnInBand = 2U; }
@@ -1975,6 +2075,7 @@ static void serviceRoute(void)
             routeNextHeading = p.heading;
             routeYaw = routeBaseYaw + p.heading * 90.0f * yawSign;
             routeRotating = 1U; routeTurnInBand = 0U;
+            routeTurnPidReset(&routeTurnPid);
             routeTurnStart = routeLegStart = clockMs;
             serialSendString("ROUTE turning to station heading\r\n");
             return;
@@ -2084,8 +2185,8 @@ static uint8_t processNavCommand(const char *command)
     }
     if (strncmp(command, "nav goto ", 9U) != 0) return 0U;
     if (!parsePairWithOptionalRpm(command + 9, &x, &y, &rpm) ||
-        rpm < 10U || rpm > 120U) {
-        serialSendString("ERR NAV: use nav goto X Y [10..120rpm]\r\n");
+        rpm < 10U || rpm > 250U) {
+        serialSendString("ERR NAV: use nav goto X Y [10..250rpm]\r\n");
         return 1U;
     }
     if (x > 2400U || y > 2400U ||
@@ -2185,20 +2286,20 @@ static uint8_t processRouteCommand(const char *command)
         if (!parseUint(&cursor, &forwardBp) ||
             !parseUint(&cursor, &lateralBp) ||
             !parseUint(&cursor, &rpm)) {
-            serialSendString("ERR ROUTE: tune F L T [V]; scales 5000..15000, speeds 10..120rpm\r\n");
+            serialSendString("ERR ROUTE: tune F L T [V]; scales 5000..15000, speeds 10..250rpm\r\n");
             return 1U;
         }
         lateralRpm = routeLateralRpmLimit;
         if (*cursor == ' ' && !parseUint(&cursor, &lateralRpm)) {
-            serialSendString("ERR ROUTE: tune F L T [V]; scales 5000..15000, speeds 10..120rpm\r\n");
+            serialSendString("ERR ROUTE: tune F L T [V]; scales 5000..15000, speeds 10..250rpm\r\n");
             return 1U;
         }
         if (*cursor != '\0' ||
             forwardBp < 5000U || forwardBp > 15000U ||
             lateralBp < 5000U || lateralBp > 15000U ||
-            rpm < 10U || rpm > 120U ||
-            lateralRpm < 10U || lateralRpm > 120U) {
-            serialSendString("ERR ROUTE: tune F L T [V]; scales 5000..15000, speeds 10..120rpm\r\n");
+            rpm < 10U || rpm > 250U ||
+            lateralRpm < 10U || lateralRpm > 250U) {
+            serialSendString("ERR ROUTE: tune F L T [V]; scales 5000..15000, speeds 10..250rpm\r\n");
             return 1U;
         }
         if (motionMode || routeActive) {
@@ -2251,6 +2352,7 @@ static uint8_t processRouteCommand(const char *command)
         routeTick = routeTurnStart = routeLegStart = clockMs;
         routeWaiting = routeTurnInBand = 0U;
         routeOnlyTurn = routeRotating = routeActive = 1U;
+        routeTurnPidReset(&routeTurnPid);
         serialSendString("TURN running\r\n"); return 1U;
     }
     if (strcmp(command, "route next") == 0) {
@@ -2291,8 +2393,8 @@ static uint8_t processRouteCommand(const char *command)
         step = 0U; autoRun = missionRun = 1U;
     } else return 0U;
     if (!parseValueWithOptionalRpm(cursor, &degrees, &rpm) ||
-        degrees < 1U || degrees > 2U || rpm < 10U || rpm > 120U) {
-        serialSendString("ERR: route start|step|auto|rawpick|mission 1|2 [10..120rpm]\r\n");
+        degrees < 1U || degrees > 2U || rpm < 10U || rpm > 250U) {
+        serialSendString("ERR: route start|step|auto|rawpick|mission 1|2 [10..250rpm]\r\n");
         return 1U;
     }
     if (motionMode || routeActive || mechanismState.running ||
@@ -2398,9 +2500,10 @@ static void serviceRawPickRoute(void)
         failVision("PICK_REQUIRES_INITIAL_POSE");
         return;
     }
-    color = rawPickColors[rawPickItemIndex];
+    color = rawPickColor(rawPickItemIndex);
     if (!vision_session_start(&visionSession, VISION_MODE_MATERIAL,
-                              color, 0U, &visionMaterialCalibration, clockMs)) {
+                              color, 0U, rawPickItemIndex == 0U ?
+                              &visionMaterialCalibration : &visionPickCalibration, clockMs)) {
         visionPickActive = 1U;
         failVision("PICK_START_REJECTED");
         return;
@@ -2468,19 +2571,21 @@ static void serviceVision(void)
             serialSendString("\r\n");
             if (rawPickAtStation) {
                 serialSendString("ROUTE RAWPICK state=ITEM_DONE color=");
-                serialSendUint(rawPickColors[rawPickItemIndex]);
+                serialSendUint(rawPickColor(rawPickItemIndex));
                 serialSendString(" slot=");
                 serialSendUint((uint16_t)(rawPickItemIndex + 1U));
                 serialSendString("\r\n");
                 ++rawPickItemIndex;
                 rawPickMissingReported = 0U;
                 if (rawPickItemIndex == 3U) {
-                    serialSendString("ROUTE RAWPICK state=DONE color=6 slot=3\r\n");
+                    serialSendString("ROUTE RAWPICK state=DONE color=");
+                    serialSendUint(rawPickColor(2U));
+                    serialSendString(" slot=3\r\n");
                     if (!missionActive)
                         serialSendString("WAIT: verify three materials; send route next\r\n");
                 } else {
                     serialSendString("ROUTE RAWPICK state=WAIT_MATERIAL color=");
-                    serialSendUint(rawPickColors[rawPickItemIndex]);
+                    serialSendUint(rawPickColor(rawPickItemIndex));
                     serialSendString(" slot=");
                     serialSendUint((uint16_t)(rawPickItemIndex + 1U));
                     serialSendString("\r\n");
@@ -2509,7 +2614,7 @@ static void serviceVision(void)
         vision_session_wait_for_material(&visionSession, &packet)) {
         if (!rawPickMissingReported) {
             serialSendString("ROUTE RAWPICK state=WAIT_MATERIAL color=");
-            serialSendUint(rawPickColors[rawPickItemIndex]);
+            serialSendUint(rawPickColor(rawPickItemIndex));
             serialSendString(" slot=");
             serialSendUint((uint16_t)(rawPickItemIndex + 1U));
             serialSendString("\r\n");
@@ -2554,7 +2659,7 @@ static void serviceVision(void)
                 printVisionState();
                 if (rawPickAtStation) {
                     serialSendString("ROUTE RAWPICK state=PICK color=");
-                    serialSendUint(rawPickColors[rawPickItemIndex]);
+                    serialSendUint(rawPickColor(rawPickItemIndex));
                     serialSendString(" slot=");
                     serialSendUint((uint16_t)(rawPickItemIndex + 1U));
                     serialSendString("\r\n");
@@ -2661,7 +2766,8 @@ static void serviceMission(void)
             !mechanismActionActive) {
             missionPhase = MISSION_RECENTER;
             missionReport("RECENTER");
-        } else if ((int32_t)(clockMs - missionDeadline) >= 0) {
+        } else if (visionSession.state != VISION_STATE_PICK &&
+                   (int32_t)(clockMs - missionDeadline) >= 0) {
             missionAbort("material_timeout");
         }
         return;
@@ -2683,6 +2789,7 @@ static void serviceMission(void)
             missionActionStarted = 1U;
             missionReport("RING_PREP");
         } else if (missionActionStarted == 1U && !mechanismState.running) {
+            uint8_t materialAlign = missionPhase == MISSION_TEMP_ALIGN && routeIndex == 12U;
             if (!mechanismState.valid ||
                 mechanismState.current.horizontalDmm != -500 ||
                 mechanismState.current.liftDmm != 0U ||
@@ -2690,15 +2797,20 @@ static void serviceMission(void)
                 missionAbort("ring_prep_failed");
                 return;
             }
-            if (!vision_session_start(&visionSession, VISION_MODE_RING, 0U,
+            if (!vision_session_start(&visionSession,
+                                      materialAlign ? VISION_MODE_MATERIAL : VISION_MODE_RING,
+                                      materialAlign ? rawPickColors[0][0] : 0U,
                                       2U, &visionRingCalibration[1], clockMs)) {
                 missionAbort("ring_start");
                 return;
             }
+            visionSession.waitForTarget = 1U;
             missionActionStarted = 2U;
             printVisionState();
         } else if (missionActionStarted == 2U &&
                    visionSession.state == VISION_STATE_ALIGNED) {
+            /* Adopt the aligned pose as this area's nominal station baseline. */
+            missionOffsetForward = missionOffsetRight = 0.0f;
             missionPhase = missionPhase == MISSION_TEMP_ALIGN ?
                            MISSION_TEMP_PLACE : MISSION_COARSE_PLACE;
             missionActionStarted = 0U;
@@ -2712,15 +2824,19 @@ static void serviceMission(void)
         missionPhase == MISSION_TEMP_PLACE) {
         if (!missionActionStarted) {
             const MechanismAction *actions = missionWorkActions;
+            const MechanismInitialState *initial = &missionInitial;
             uint16_t count = MISSION_PLACE_COUNT;
-            if (missionPhase == MISSION_COARSE_PLACE)
-                actions = missionPlaceActions;
-            else if (missionPhase == MISSION_COARSE_PICK) {
+            if (missionPhase == MISSION_COARSE_PLACE) {
+                actions = missionCoarsePlaceActions;
+                initial = &missionCoarseInitial;
+                count = MISSION_COARSE_PLACE_COUNT;
+            } else if (missionPhase == MISSION_COARSE_PICK) {
                 missionBuildPickBack(missionPickBackActions);
                 actions = missionPickBackActions;
+                initial = &missionCoarseInitial;
                 count = MISSION_PICK_BACK_COUNT;
             }
-            if (!mechanismActionStart(&missionInitial, actions, count)) {
+            if (!mechanismActionStart(initial, actions, count)) {
                 missionAbort("action_start");
                 return;
             }

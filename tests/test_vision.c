@@ -249,6 +249,70 @@ int main(void)
     }
 
     {
+        VisionSession waiting;
+        uint16_t attempt;
+        vision_session_init(&waiting);
+        vision_session_start(&waiting, VISION_MODE_RING, 0U, 2U,
+                             &calibration, 0U);
+        for (attempt = 0U; attempt < 300U; ++attempt) {
+            vision_session_make_request(&waiting, &calibration, &request, attempt);
+            decoded = request;
+            decoded.type = VISION_MESSAGE_RESULT;
+            decoded.flags = 0U;
+            if (!require(vision_session_observe(&waiting, &calibration, &decoded,
+                                                attempt) == VISION_EVENT_REQUEST &&
+                         waiting.misses == 0U && waiting.iteration == 0U &&
+                         waiting.cumulativeMm == 0.0f,
+                         "missing ring must keep retrying without motion")) return 1;
+        }
+        for (attempt = 0U; attempt < 3U; ++attempt) {
+            vision_session_make_request(&waiting, &calibration, &request, attempt);
+            decoded = request;
+            decoded.type = VISION_MESSAGE_RESULT;
+            decoded.flags = attempt == 1U ? 0U : VISION_FLAG_VALID | VISION_FLAG_STABLE;
+            decoded.value[0] = calibration.anchorU;
+            decoded.value[1] = calibration.anchorV;
+            decoded.value[2] = 90;
+            if (!require(vision_session_observe(&waiting, &calibration, &decoded,
+                                                attempt) == VISION_EVENT_REQUEST,
+                         "alignment confirmations must be consecutive")) return 1;
+        }
+        for (attempt = 0U; attempt < 3U; ++attempt) {
+            vision_session_make_request(&waiting, &calibration, &request,
+                                        attempt * 2000U);
+            if (!require(vision_session_tick(&waiting, attempt * 2000U + 1800U) ==
+                             (attempt < 2U ? VISION_EVENT_REQUEST : VISION_EVENT_FAILED),
+                         "ring wait must still fail on communication timeout")) return 1;
+        }
+        vision_session_start(&waiting, VISION_MODE_MATERIAL, 4U, 2U,
+                             &calibration, 0U);
+        waiting.waitForTarget = 1U;
+        for (attempt = 0U; attempt < 300U; ++attempt) {
+            vision_session_make_request(&waiting, &calibration, &request, attempt);
+            decoded = request;
+            decoded.type = VISION_MESSAGE_RESULT;
+            decoded.flags = 0U;
+            if (!require(vision_session_observe(&waiting, &calibration, &decoded,
+                                                attempt) == VISION_EVENT_REQUEST &&
+                         waiting.misses == 0U && waiting.iteration == 0U,
+                         "missing storage material must keep waiting")) return 1;
+        }
+        for (attempt = 0U; attempt < 2U; ++attempt) {
+            vision_session_make_request(&waiting, &calibration, &request, attempt);
+            decoded = request;
+            decoded.type = VISION_MESSAGE_RESULT;
+            decoded.flags = VISION_FLAG_VALID | VISION_FLAG_STABLE;
+            decoded.value[0] = calibration.anchorU;
+            decoded.value[1] = calibration.anchorV;
+            decoded.value[2] = 90;
+            if (!require(vision_session_observe(&waiting, &calibration, &decoded,
+                                                attempt) ==
+                             (attempt == 0U ? VISION_EVENT_REQUEST : VISION_EVENT_ALIGNED),
+                         "storage material must align after retrying")) return 1;
+        }
+    }
+
+    {
         VisionSession iterations;
         uint8_t correction;
         vision_session_init(&iterations);

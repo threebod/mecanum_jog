@@ -449,11 +449,11 @@
               <FileType>1</FileType>
               <FilePath>.\jog_can.c</FilePath>
             </File>
-              <File>
-                <FileName>jog_can_diagnostics.c</FileName>
-                <FileType>1</FileType>
-                <FilePath>.\jog_can_diagnostics.c</FilePath>
-              </File>
+            <File>
+              <FileName>jog_can_diagnostics.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\jog_can_diagnostics.c</FilePath>
+            </File>
             <File>
               <FileName>Emm_V5.c</FileName>
               <FileType>1</FileType>
@@ -469,11 +469,11 @@
               <FileType>1</FileType>
               <FilePath>.\main.c</FilePath>
             </File>
-              <File>
-                <FileName>hwt101.c</FileName>
-                <FileType>1</FileType>
-                <FilePath>.\hwt101.c</FilePath>
-              </File>
+            <File>
+              <FileName>hwt101.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\hwt101.c</FilePath>
+            </File>
             <File>
               <FileName>system_stm32f4xx.c</FileName>
               <FileType>1</FileType>

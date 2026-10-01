@@ -88,7 +88,7 @@ int main(void)
     assert(routeAbs(routeEstimateScaled(-60,1000,0.925f)+
                     314.159265f*0.925f) < 0.001f);
     assert(routeAbs(ROUTE_LATERAL_SCALE-0.9f) < 0.0001f);
-    assert(ROUTE_LATERAL_RPM_MAX == 60U);
+    assert(ROUTE_LATERAL_RPM_MAX == 150U);
     routeHeadingPidReset(&headingPid);
     assert(routeHeadingPidStep(&headingPid, &gains, 0, 179, 100, 20, 1) == 0);
     assert(routeHeadingPidStep(&headingPid, &gains, -2, -179, 200, 20, 1) < -4);
@@ -111,10 +111,27 @@ int main(void)
     routeBody(0,20,-1,&forward,&right); assert(forward==20 && right==0);
     routeBody(20,10,2,&forward,&right); assert(forward==-20 && right==-10);
     routeBody(20,10,0,&forward,&right); assert(forward==20 && right==10);
-    assert(routeTurnSpeed(90,1)==45 && routeTurnSpeed(-90,1)==-45);
-    assert(routeTurnSpeed(90,-1)==-45 && routeTurnSpeed(-90,-1)==45);
-    assert(routeTurnSpeed(3,1)==3);
-    assert(routeTurnSpeedLimited(90,1,45)==45);
+    {
+        RouteTurnPid turnPid;
+        float output;
+        routeTurnPidReset(&turnPid);
+        assert(routeTurnPidStep(&turnPid, 180, 0, 230, 1) == 230);
+        assert(turnPid.integral == 0);
+        routeTurnPidReset(&turnPid);
+        assert(routeTurnPidStep(&turnPid, 10, 100, 230, 1) > 20);
+        output = routeTurnPidStep(&turnPid, 5, 150, 230, 1);
+        assert(output < 10); /* decreasing error supplies derivative braking */
+        assert(routeTurnPidStep(&turnPid, 5, 150, 230, 1) == output);
+        assert(routeTurnPidStep(&turnPid, 5, 150, 230, -1) == -output);
+        assert(routeTurnPidStep(&turnPid, -4, 200, 230, 1) < 0);
+        routeTurnPidReset(&turnPid);
+        routeTurnPidStep(&turnPid, 179, 100, 230, 1);
+        assert(routeTurnPidStep(&turnPid, -179, 150, 230, 1) == -230);
+        assert(routeTurnRamp(100, 5, 20) == 5);
+        assert(routeTurnRamp(100, 0, 20) == 0);
+        assert(routeTurnRamp(100, -5, 20) < 0);
+        assert(routeTurnRamp(0, 100, 20) < 2);
+    }
     assert(routeSpeed(1000,0,60)==0);
     assert(routeSpeed(1000,350,60)==30);
     assert(routeSpeed(5,1000,60)>3); /* no long minimum-speed crawl */

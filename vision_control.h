@@ -67,6 +67,7 @@ typedef struct {
     uint8_t misses;
     uint8_t confirmations;
     uint8_t iteration;
+    uint8_t waitForTarget;
     uint32_t token;
     uint32_t requestAt;
     uint32_t settleUntil;
@@ -217,6 +218,7 @@ static uint8_t vision_session_start(VisionSession *session, uint8_t mode,
     session->mode = mode;
     session->selector = selector;
     session->target = target;
+    session->waitForTarget = mode == VISION_MODE_RING;
     session->state = VISION_STATE_REQUEST;
     return 1U;
 }
@@ -284,6 +286,12 @@ static VisionEvent vision_session_observe(VisionSession *session,
         packet->target != session->target) return VISION_EVENT_NONE;
     if ((packet->flags & (VISION_FLAG_VALID | VISION_FLAG_STABLE)) !=
             (VISION_FLAG_VALID | VISION_FLAG_STABLE) || packet->value[2] < 60) {
+        session->confirmations = 0U;
+        if (session->waitForTarget) {
+            session->misses = 0U;
+            session->state = VISION_STATE_REQUEST;
+            return VISION_EVENT_REQUEST;
+        }
         return vision_session_miss(session, "UNCONFIRMED");
     }
     session->misses = 0U;

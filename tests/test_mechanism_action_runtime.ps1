@@ -27,16 +27,17 @@ static void startMechanismPose(const MechanismPose *pose)
 static void servoSetTarget(uint8_t channel, uint16_t angle, uint16_t speed)
 {
     (void)angle; (void)speed;
-    assert(channel == 2U);
-    servoChannelMoving[0] = 1U;
-    ++gripperStarts;
+    assert(channel == 2U || channel == 3U);
+    servoChannelMoving[channel - 2U] = 1U;
+    if (channel == 2U) ++gripperStarts;
+    if (channel == 3U) assert(speed == 1800U);
 }
 '@
 $suffix = @'
 int main(void)
 {
     const MechanismInitialState initial = MECH_INITIAL_STATE(
-        0, 0, 2700, 40, 50, 90, 50, 1200, 1200, 1200,
+        0, 0, 2700, 40, 50, 90, 50, 1200, 1200, 1800,
         1, 1, 70, 35, 30, 150, 270);
     const MechanismAction actions[] = {
         MECH_GRIPPER_OPEN(0),
@@ -57,13 +58,78 @@ int main(void)
     assert(poseStarts == 1U && mechanismState.target.liftDmm == 0U);
     mechanismActionService();
     assert(mechanismActionIndex == 1U && poseStarts == 1U);
-    clockMs = mechanismState.deadlineMs;
-    assert(mechanismStateService(&mechanismState, clockMs) == MECHANISM_EVENT_DONE);
+    mechanismState.pendingMotors = 0U;
+    clockMs += 100U;
+    assert(mechanismStateService(&mechanismState, clockMs, 0U) == MECHANISM_EVENT_DONE);
     mechanismActionService();
     assert(mechanismActionIndex == 2U);
     mechanismActionService();
     assert(poseStarts == 2U && mechanismState.target.liftDmm == 1300U);
     puts("PASS: pickup waits for the prior pose before lift");
+    mechanismState.pendingMotors = 0U;
+    clockMs += 100U;
+    mechanismStateService(&mechanismState, clockMs, 0U);
+    mechanismActionService();
+    mechanismActionService();
+    assert(!mechanismActionActive);
+    {
+        const MechanismAction waitActions[] = {
+            MECH_GRIPPER_CLOSE(300), MECH_GRIPPER_OPEN(0)
+        };
+        assert(mechanismActionStart(&initial, waitActions, 2U));
+        mechanismActionService();
+        clockMs += 1000U; /* Extra wait starts after motion, not dispatch. */
+        mechanismActionService();
+        assert(mechanismActionWaitUntil == 0U);
+        servoChannelMoving[0] = 0U;
+        mechanismActionService();
+        assert(mechanismActionWaitUntil == clockMs + 300U);
+        clockMs += 299U;
+        mechanismActionService();
+        assert(mechanismActionIndex == 0U);
+        ++clockMs;
+        mechanismActionService();
+        assert(mechanismActionIndex == 1U && gripperStarts == 3U);
+    }
+    puts("PASS: waitMs is added once after motion completes");
+    servoChannelMoving[0] = 0U;
+    mechanismActionService();
+    mechanismActionService();
+    {
+        const MechanismAction parallel[] = {
+            MECH_PLATFORM(2, 0),
+            MECH_POSE(-500, 0, 1320, 40, 50, 90, 50, 1200, 0),
+            MECH_POSE(-500, 300, 1320, 40, 50, 90, 50, 1200, 0),
+            MECH_PLATFORM(3, 0), MECH_PLATFORM(1, 0)
+        };
+        assert(mechanismActionStart(&initial, parallel, 5U));
+        mechanismActionService();
+        assert(mechanismActionIndex == 1U && servoChannelMoving[1]);
+        mechanismActionService();
+        assert(mechanismState.running); /* Pose overlaps platform rotation. */
+        mechanismState.pendingMotors = 0U;
+        assert(mechanismStateService(&mechanismState, clockMs, 0U) == MECHANISM_EVENT_DONE);
+        mechanismActionService();
+        assert(mechanismActionIndex == 2U);
+        mechanismActionService();
+        assert(!mechanismState.running); /* Tray descent must wait. */
+        servoChannelMoving[1] = 0U;
+        mechanismActionService();
+        assert(mechanismState.running && mechanismState.target.liftDmm == 300U);
+        mechanismState.pendingMotors = 0U;
+        mechanismStateService(&mechanismState, clockMs, 0U);
+        mechanismActionService();
+        mechanismActionService();
+        assert(mechanismActionIndex == 4U && servoChannelMoving[1]);
+        mechanismActionService();
+        assert(mechanismActionIndex == 4U && !mechanismActionDispatched);
+        servoChannelMoving[1] = 0U;
+        mechanismActionService();
+        assert(mechanismActionIndex == 5U);
+        mechanismActionService();
+        assert(!mechanismActionActive);
+    }
+    puts("PASS: platform overlaps poses, tray descent and next rotation wait");
     return 0;
 }
 '@

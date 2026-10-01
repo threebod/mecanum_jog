@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 #define __IO volatile
+#define __disable_irq() ((void)0)
+#define __enable_irq() ((void)0)
 typedef struct { uint32_t StdId, ExtId; uint8_t IDE, RTR, DLC, Data[8]; } CanTxMsg;
 typedef CanTxMsg CanRxMsg;
 typedef struct { CanRxMsg CAN_RxMsg; CanTxMsg CAN_TxMsg; bool rxFrameFlag; } CAN_t;

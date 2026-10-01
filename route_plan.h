@@ -11,10 +11,10 @@
 /* Six 100 RPM center tests averaged 103.9 cm vs 105 cm nominal at 90%. */
 #define ROUTE_LATERAL_SCALE 0.9f
 #define ROUTE_MM_PER_REV    314.159265f /* pi * 100 mm, direct drive G=1 */
-#define ROUTE_RPM           60
-#define ROUTE_LATERAL_RPM_MAX 60U
+#define ROUTE_RPM           200
+#define ROUTE_LATERAL_RPM_MAX 150U
 #define ROUTE_ACCEL_RPM_S   120.0f
-#define ROUTE_TURN_RPM      45.0f
+#define ROUTE_TURN_RPM      230.0f
 #define ROUTE_TURN_ACCEL    90.0f
 /* Initial navigation heading PID gains; tune against measured IMU response. */
 #define ROUTE_HEADING_KP    2.0f
@@ -108,17 +108,64 @@ static void routeBody(int16_t mapUp, int16_t mapRight, int8_t heading,
     default: *forward = mapUp; *right = mapRight; break;
     }
 }
-static int16_t routeTurnSpeedLimited(float error, int8_t sign,
-                                     uint16_t maximumRpm)
+typedef struct {
+    float previousError;
+    float integral;
+    float output;
+    uint32_t sampleMs;
+    uint8_t initialized;
+} RouteTurnPid;
+
+static void routeTurnPidReset(RouteTurnPid *pid)
 {
-    float speed = error * 1.2f;
-    if (speed > maximumRpm) speed = maximumRpm;
-    if (speed < -(float)maximumRpm) speed = -(float)maximumRpm;
-    return (int16_t)(speed * sign);
+    pid->previousError = pid->integral = pid->output = 0.0f;
+    pid->sampleMs = 0U;
+    pid->initialized = 0U;
 }
-static int16_t routeTurnSpeed(float error, int8_t sign)
+
+/* yyb_stm32 profiles 0/3 use 50 ms error differences and a 7 RPM integral limit. */
+static float routeTurnPidStep(RouteTurnPid *pid, float error,
+                              uint32_t sampleMs, uint16_t maximumRpm, int8_t sign)
 {
-    return routeTurnSpeedLimited(error, sign, (uint16_t)ROUTE_TURN_RPM);
+    float sampleScale = 1.0f;
+    float change = 0.0f;
+    float kd = routeAbs(error) > 15.0f ? 0.8f : 0.4f;
+    if (pid->initialized) {
+        if (sampleMs == pid->sampleMs) return pid->output * sign;
+        sampleScale = (sampleMs - pid->sampleMs) / 50.0f;
+        change = error - pid->previousError;
+        while (change > 180.0f) change -= 360.0f;
+        while (change < -180.0f) change += 360.0f;
+    }
+    if (routeAbs(error) <= 15.0f) {
+        pid->integral += error * 0.05f * sampleScale;
+        if (pid->integral > 7.0f) pid->integral = 7.0f;
+        if (pid->integral < -7.0f) pid->integral = -7.0f;
+    } else {
+        pid->integral = 0.0f;
+    }
+    pid->output = error * 2.0f + kd * change / sampleScale + pid->integral;
+    if (pid->output > maximumRpm) pid->output = maximumRpm;
+    if (pid->output < -(float)maximumRpm) pid->output = -(float)maximumRpm;
+    pid->previousError = error;
+    pid->sampleMs = sampleMs;
+    pid->initialized = 1U;
+    return pid->output * sign;
+}
+
+static float routeTurnRamp(float current, float target, uint32_t dt)
+{
+    /* Braking and reversal must not keep the previous turn command alive. */
+    if (current * target <= 0.0f || routeAbs(target) < routeAbs(current)) {
+        if (current * target < 0.0f) current = 0.0f;
+        else if (routeAbs(target) < routeAbs(current)) return target;
+    }
+    {
+        float step = ROUTE_TURN_ACCEL * dt / 1000.0f;
+        if (target > current + step) return current + step;
+        if (target < current - step) return current - step;
+    }
+    return target;
 }
 /* Positive lateral means right. IDs: FR=1 FL=2 RL=3 RR=4.
  * X roller layout, matching the verified chassis_position mapping. */

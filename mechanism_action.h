@@ -3,19 +3,22 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <math.h>
+#include "turret_motion.h"
 
 #define MECHANISM_HORIZONTAL_MIN_DMM (-1220)
 #define MECHANISM_HORIZONTAL_MAX_DMM 650
 #define MECHANISM_LIFT_MAX_DMM 1500U
 #define MECHANISM_TURRET_MAX_DDEG 3600U
 #define MECHANISM_RPM_MIN 10U
-#define MECHANISM_RPM_MAX 2000U
+#define MECHANISM_RPM_MAX 1200U
 #define MECHANISM_ACCEL_MIN 1U
-#define MECHANISM_ACCEL_MAX 240U
+#define MECHANISM_ACCEL_MAX 200U
 #define MECHANISM_TURRET_SPEED_MIN 10U
 #define MECHANISM_TURRET_SPEED_MAX 1800U
-#define MECHANISM_MOTOR_SETTLE_MS 500U
-#define MECHANISM_TURRET_SETTLE_MS 100U
+#define MECHANISM_TIMEOUT_MARGIN_MS 3000U
+#define MECHANISM_LIFT_PENDING 1U
+#define MECHANISM_HORIZONTAL_PENDING 2U
 
 typedef struct {
     int16_t horizontalDmm;
@@ -70,12 +73,14 @@ typedef struct {
 typedef enum {
     MECHANISM_EVENT_NONE = 0,
     MECHANISM_EVENT_POSITION,
-    MECHANISM_EVENT_DONE
+    MECHANISM_EVENT_DONE,
+    MECHANISM_EVENT_TIMEOUT
 } MechanismEvent;
 
 typedef struct {
     uint8_t valid;
     uint8_t running;
+    uint8_t pendingMotors;
     MechanismPose start;
     MechanismPose current;
     MechanismPose target;
@@ -137,12 +142,21 @@ static uint32_t mechanismLiftPulses(int16_t deltaDmm)
     return mechanismAbsoluteDelta(deltaDmm) * 8U;
 }
 
-static uint32_t mechanismMotorDurationMs(uint32_t pulses, uint16_t rpm)
+static uint32_t mechanismMotorDurationMs(uint32_t pulses, uint16_t rpm,
+                                         uint8_t accel)
 {
-    uint32_t denominator = 3200U * (uint32_t)rpm;
+    float cruiseMs, rampMs, movementMs;
+    uint32_t roundedMs;
     if (pulses == 0U) return 0U;
-    return (pulses * 60000U + denominator - 1U) / denominator +
-           MECHANISM_MOTOR_SETTLE_MS;
+    cruiseMs = (float)pulses * 60000.0f / (3200.0f * rpm);
+    /* Emm position mode: each 1 RPM step takes (256 - acc) * 50 us.
+     * Short moves use a triangular profile; longer moves reach the set RPM. */
+    rampMs = accel == 0U ? 0.0f : rpm * (256U - accel) * 0.05f;
+    movementMs = cruiseMs >= rampMs ? cruiseMs + rampMs :
+                 2.0f * sqrtf(cruiseMs * rampMs);
+    roundedMs = (uint32_t)movementMs;
+    if ((float)roundedMs < movementMs) ++roundedMs;
+    return roundedMs;
 }
 
 static uint32_t mechanismMoveDurationMs(const MechanismPose *current,
@@ -156,12 +170,13 @@ static uint32_t mechanismMoveDurationMs(const MechanismPose *current,
         (uint16_t)(target->turretDdeg - current->turretDdeg) :
         (uint16_t)(current->turretDdeg - target->turretDdeg);
     uint32_t horizontalMs = mechanismMotorDurationMs(
-        mechanismHorizontalPulses(horizontalDelta), target->horizontalRpm);
+        mechanismHorizontalPulses(horizontalDelta), target->horizontalRpm,
+        target->horizontalAccel);
     uint32_t liftMs = mechanismMotorDurationMs(
-        mechanismLiftPulses(liftDelta), target->liftRpm);
+        mechanismLiftPulses(liftDelta), target->liftRpm, target->liftAccel);
     uint32_t turretMs = turretDelta == 0U ? 0U :
-        (uint32_t)turretDelta * 1000U / target->turretDps10 +
-        MECHANISM_TURRET_SETTLE_MS;
+        turretMotionDurationMs((uint32_t)turretDelta * 100U,
+                               target->turretDps10);
     uint32_t maximum = horizontalMs > liftMs ? horizontalMs : liftMs;
     return maximum > turretMs ? maximum : turretMs;
 }
@@ -273,6 +288,7 @@ static void mechanismStateInitialize(MechanismState *state,
 {
     state->valid = 1U;
     state->running = 0U;
+    state->pendingMotors = 0U;
     state->current = *pose;
     state->target = *pose;
 }
@@ -285,17 +301,27 @@ static uint8_t mechanismStateStart(MechanismState *state,
     state->target = *target;
     state->start = state->current;
     state->running = 1U;
+    state->pendingMotors =
+        (state->current.liftDmm != target->liftDmm ? MECHANISM_LIFT_PENDING : 0U) |
+        (state->current.horizontalDmm != target->horizontalDmm ?
+         MECHANISM_HORIZONTAL_PENDING : 0U);
     state->startMs = nowMs;
     state->lastReportMs = nowMs;
     state->durationMs = mechanismMoveDurationMs(&state->current, target);
-    state->deadlineMs = nowMs + state->durationMs;
+    state->deadlineMs = nowMs + state->durationMs + MECHANISM_TIMEOUT_MARGIN_MS;
     return 1U;
 }
 
-static uint8_t mechanismStateService(MechanismState *state, uint32_t nowMs)
+static uint8_t mechanismStateService(MechanismState *state, uint32_t nowMs,
+                                      uint8_t turretMoving)
 {
     if (!state->running) return MECHANISM_EVENT_NONE;
     if ((int32_t)(nowMs - state->deadlineMs) >= 0) {
+        state->valid = state->running = 0U;
+        state->pendingMotors = 0U;
+        return MECHANISM_EVENT_TIMEOUT;
+    }
+    if (state->pendingMotors == 0U && !turretMoving) {
         state->current = state->target;
         state->running = 0U;
         return MECHANISM_EVENT_DONE;
@@ -308,6 +334,8 @@ static uint8_t mechanismStateService(MechanismState *state, uint32_t nowMs)
                             state->start.liftDmm;
         int32_t turretDelta = (int32_t)state->target.turretDdeg -
                               state->start.turretDdeg;
+        if (elapsed > state->durationMs) elapsed = state->durationMs;
+        if (state->durationMs == 0U) return MECHANISM_EVENT_NONE;
         state->current.horizontalDmm = (int16_t)(state->start.horizontalDmm +
             horizontalDelta * (int32_t)elapsed / (int32_t)state->durationMs);
         state->current.liftDmm = (uint16_t)(state->start.liftDmm +
@@ -324,6 +352,7 @@ static void mechanismStateInvalidate(MechanismState *state)
 {
     state->valid = 0U;
     state->running = 0U;
+    state->pendingMotors = 0U;
 }
 
 uint8_t mechanismActionStart(const MechanismInitialState *initial,

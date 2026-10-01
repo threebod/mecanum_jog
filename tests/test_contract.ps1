@@ -61,7 +61,7 @@ $requiredMainPatterns = @(
     'Emm_V5_En_Control\(id, enabled, false\)',
     '(?s)strcmp\(command, "disable"\) == 0.*?setAllMotorsEnabled\(false\).*?armed = 0U;',
     '(?s)static void startAuxMotorJog\(uint8_t motorId, uint8_t direction\).*?Emm_V5_En_Control\(motorId, true, false\).*?Emm_V5_Pos_Control\(motorId, direction,.*?false, false\)',
-    '(?s)static uint8_t processAuxMoveCommand\(const char \*command\).*?motorId < AUX_MOTOR_MIN_ID.*?motorId > AUX_MOTOR_MAX_ID.*?maximumDmm = motorId == 5U \? 1500 : 1870;.*?distanceDmm == 0.*?mechanismLiftPulses.*?mechanismHorizontalPulses.*?Emm_V5_Pos_Control\(\(uint8_t\)motorId, direction, rpm,.*?accel, pulses, false, false\).*?motionMode = 3U.*?motionDuration = mechanismMotorDurationMs\(pulses, rpm\) \* 2U \+.*?AUX_MOVE_TIMEOUT_MARGIN_MS',
+    '(?s)static uint8_t processAuxMoveCommand\(const char \*command\).*?motorId < AUX_MOTOR_MIN_ID.*?motorId > AUX_MOTOR_MAX_ID.*?maximumDmm = motorId == 5U \? 1500 : 1870;.*?distanceDmm == 0.*?mechanismLiftPulses.*?mechanismHorizontalPulses.*?Emm_V5_Pos_Control\(\(uint8_t\)motorId, direction, rpm,.*?accel, pulses, false, false\).*?motionMode = 3U.*?motionDuration = mechanismMotorDurationMs\(pulses, rpm, \(uint8_t\)accel\) \* 2U \+.*?AUX_MOVE_TIMEOUT_MARGIN_MS',
     '(?s)static void serviceMotion\(void\).*?if \(motionMode == 3U\).*?function == 0x3AU.*?status & 0x02U.*?DONE: auxmove motor=.*?Emm_V5_Read_Sys_Params\(auxMoveMotorId, S_FLAG\)',
     '(?s)static void processCommand\(const char \*command\).*?processAuxMoveCommand\(command\)',
     '(?s)strncmp\(command, "motor ", 6U\) == 0.*?id < AUX_MOTOR_MIN_ID.*?id > AUX_MOTOR_MAX_ID.*?startAuxMotorJog',
