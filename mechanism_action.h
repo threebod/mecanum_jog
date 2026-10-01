@@ -16,9 +16,6 @@
 #define MECHANISM_ACCEL_MAX 200U
 #define MECHANISM_TURRET_SPEED_MIN 10U
 #define MECHANISM_TURRET_SPEED_MAX 1800U
-#define MECHANISM_TIMEOUT_MARGIN_MS 3000U
-#define MECHANISM_LIFT_PENDING 1U
-#define MECHANISM_HORIZONTAL_PENDING 2U
 
 typedef struct {
     int16_t horizontalDmm;
@@ -73,14 +70,12 @@ typedef struct {
 typedef enum {
     MECHANISM_EVENT_NONE = 0,
     MECHANISM_EVENT_POSITION,
-    MECHANISM_EVENT_DONE,
-    MECHANISM_EVENT_TIMEOUT
+    MECHANISM_EVENT_DONE
 } MechanismEvent;
 
 typedef struct {
     uint8_t valid;
     uint8_t running;
-    uint8_t pendingMotors;
     MechanismPose start;
     MechanismPose current;
     MechanismPose target;
@@ -288,7 +283,6 @@ static void mechanismStateInitialize(MechanismState *state,
 {
     state->valid = 1U;
     state->running = 0U;
-    state->pendingMotors = 0U;
     state->current = *pose;
     state->target = *pose;
 }
@@ -301,14 +295,10 @@ static uint8_t mechanismStateStart(MechanismState *state,
     state->target = *target;
     state->start = state->current;
     state->running = 1U;
-    state->pendingMotors =
-        (state->current.liftDmm != target->liftDmm ? MECHANISM_LIFT_PENDING : 0U) |
-        (state->current.horizontalDmm != target->horizontalDmm ?
-         MECHANISM_HORIZONTAL_PENDING : 0U);
     state->startMs = nowMs;
     state->lastReportMs = nowMs;
     state->durationMs = mechanismMoveDurationMs(&state->current, target);
-    state->deadlineMs = nowMs + state->durationMs + MECHANISM_TIMEOUT_MARGIN_MS;
+    state->deadlineMs = nowMs + state->durationMs;
     return 1U;
 }
 
@@ -316,12 +306,7 @@ static uint8_t mechanismStateService(MechanismState *state, uint32_t nowMs,
                                       uint8_t turretMoving)
 {
     if (!state->running) return MECHANISM_EVENT_NONE;
-    if ((int32_t)(nowMs - state->deadlineMs) >= 0) {
-        state->valid = state->running = 0U;
-        state->pendingMotors = 0U;
-        return MECHANISM_EVENT_TIMEOUT;
-    }
-    if (state->pendingMotors == 0U && !turretMoving) {
+    if ((int32_t)(nowMs - state->deadlineMs) >= 0 && !turretMoving) {
         state->current = state->target;
         state->running = 0U;
         return MECHANISM_EVENT_DONE;
@@ -352,7 +337,6 @@ static void mechanismStateInvalidate(MechanismState *state)
 {
     state->valid = 0U;
     state->running = 0U;
-    state->pendingMotors = 0U;
 }
 
 uint8_t mechanismActionStart(const MechanismInitialState *initial,

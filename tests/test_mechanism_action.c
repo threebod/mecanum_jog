@@ -114,8 +114,7 @@ int main(void)
            state.current.horizontalDmm < fast.horizontalDmm);
     assert(state.current.liftDmm > pose.liftDmm &&
            state.current.liftDmm < fast.liftDmm);
-    state.pendingMotors = 0U;
-    assert(mechanismStateService(&state, 400U, 0U) == MECHANISM_EVENT_DONE);
+    assert(mechanismStateService(&state, state.deadlineMs, 0U) == MECHANISM_EVENT_DONE);
     assert(!state.running && state.current.horizontalDmm == 650);
     mechanismStateInvalidate(&state);
     assert(!state.valid && !state.running);
@@ -124,13 +123,10 @@ int main(void)
     assert(mechanismStateStart(&state, &liftTarget, 0U));
     assert(mechanismStateService(&state, 695U, 0U) == MECHANISM_EVENT_POSITION);
     assert(state.running); /* Former constant-speed deadline must not finish it. */
-    assert(mechanismStateService(&state, 1478U, 0U) != MECHANISM_EVENT_DONE);
-    assert(mechanismStateService(&state, state.deadlineMs, 0U) == MECHANISM_EVENT_TIMEOUT);
-    assert(!state.valid && !state.running);
-    mechanismStateInitialize(&state, &liftStart);
-    assert(mechanismStateStart(&state, &liftTarget, 0U));
-    state.pendingMotors = 0U;
-    assert(mechanismStateService(&state, 100U, 0U) == MECHANISM_EVENT_DONE);
+    assert(state.deadlineMs == 1478U);
+    assert(mechanismStateService(&state, 1477U, 0U) != MECHANISM_EVENT_DONE);
+    assert(mechanismStateService(&state, 1478U, 0U) == MECHANISM_EVENT_DONE);
+    assert(state.valid && !state.running);
 
     assert(initial.pose.turretDdeg == 684U);
     assert(initial.gripperDps10 == 1800U && initial.platformDps10 == 1700U);

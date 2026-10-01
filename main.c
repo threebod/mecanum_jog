@@ -153,8 +153,6 @@ static void sendRouteSpeeds(int16_t forward, int16_t right, int16_t turn);
 static void printHeadingPidTrace(float targetYaw, float actualYaw, int16_t turn);
 static void serialSendString(const char *text);
 static MechanismState mechanismState;
-static uint32_t mechanismLastStatusPoll;
-static uint8_t mechanismStatusSeen, mechanismLastStatus[2];
 static const MechanismInitialState *mechanismActionInitial;
 static const MechanismAction *mechanismActions;
 static uint16_t mechanismActionCount, mechanismActionIndex;
@@ -508,7 +506,6 @@ static void stopAllMotors(void)
     }
     visionPickActive = 0U;
     invalidateMechanism("stopped");
-    jogCanResetAuxStatus();
     mechanismActionActive = 0U;
     motionMode = 0U;
     straightUseRoutePid = 0U;
@@ -1297,9 +1294,7 @@ static void startMechanismPose(const MechanismPose *target)
         serialSendString("ERR MECH: invalid or busy pose\r\n");
         return;
     }
-    jogCanResetAuxStatus();
     setAuxMotorsEnabled(true);
-    mechanismStatusSeen = 0U;
     if (motionInterrupted()) { stopServoMotion(); stopAllMotors(); return; }
     if (horizontalPulses != 0U) {
         Emm_V5_Pos_Control(6U, horizontalDelta > 0 ? 0U : 1U,
@@ -1317,7 +1312,6 @@ static void startMechanismPose(const MechanismPose *target)
     if (motionInterrupted()) { stopServoMotion(); stopAllMotors(); return; }
     Emm_V5_Synchronous_motion(0x00);
     if (motionInterrupted()) { stopServoMotion(); stopAllMotors(); return; }
-    mechanismLastStatusPoll = clockMs - AUX_MOVE_STATUS_POLL_MS;
     printMechanismPose("MECH RUN", target);
 }
 
@@ -1373,72 +1367,19 @@ static uint8_t processMechanismCommand(const char *commandText)
 
 static void serviceMechanism(void)
 {
-    uint8_t id, status, event, waiting;
+    uint8_t event;
     if (!mechanismState.running) return;
     if (motionInterrupted()) {
         stopServoMotion();
         stopAllMotors();
         return;
     }
-    for (id = 5U; id <= 6U; ++id) {
-        uint8_t bit = (uint8_t)(1U << (id - 5U));
-        if ((mechanismState.pendingMotors & bit) &&
-            jogCanTakeAuxStatus(id, &status)) {
-            if (!(mechanismStatusSeen & bit) || mechanismLastStatus[id - 5U] != status) {
-                serialSendString("MECH MOTOR id=");
-                serialSendUint(id);
-                serialSendString(" status=0x");
-                serialSendHex8(status);
-                serialSendString("\r\n");
-            }
-            mechanismStatusSeen |= bit;
-            mechanismLastStatus[id - 5U] = status;
-            if (status & 0x02U) mechanismState.pendingMotors &= (uint8_t)~bit;
-        }
-    }
-    waiting = mechanismState.pendingMotors;
     event = mechanismStateService(&mechanismState, clockMs, servoChannelMoving[2]);
     if (event == MECHANISM_EVENT_POSITION) {
         printMechanismPose("MECH POS", &mechanismState.current);
     } else if (event == MECHANISM_EVENT_DONE) {
-        jogCanResetAuxStatus();
         stopAuxMotors();
         printMechanismPose("MECH DONE", &mechanismState.current);
-    } else if (event == MECHANISM_EVENT_TIMEOUT) {
-        stopServoMotion();
-        stopAllMotors();
-        for (id = 5U; id <= 6U; ++id) {
-            uint8_t bit = (uint8_t)(1U << (id - 5U));
-            if (waiting & bit) {
-                serialSendString("MECH TIMEOUT motor=");
-                serialSendUint(id);
-                serialSendString(" received=");
-                serialSendUint((mechanismStatusSeen & bit) != 0U);
-                if (mechanismStatusSeen & bit) {
-                    serialSendString(" status=0x");
-                    serialSendHex8(mechanismLastStatus[id - 5U]);
-                }
-                serialSendString("\r\n");
-            }
-        }
-        if (waiting == 0U) serialSendString("MECH TIMEOUT servo=4\r\n");
-        serialSendString("ERR MECH: arrival status timeout; stopped\r\n");
-        return;
-    }
-    if (mechanismState.running &&
-        clockMs - mechanismLastStatusPoll >= AUX_MOVE_STATUS_POLL_MS) {
-        mechanismLastStatusPoll = clockMs;
-        for (id = 5U; id <= 6U; ++id) {
-            if (mechanismState.pendingMotors & (1U << (id - 5U))) {
-                jogCanExpectAuxStatus(id);
-                Emm_V5_Read_Sys_Params(id, S_FLAG);
-                if (motionInterrupted()) {
-                    stopServoMotion();
-                    stopAllMotors();
-                    return;
-                }
-            }
-        }
     }
 }
 

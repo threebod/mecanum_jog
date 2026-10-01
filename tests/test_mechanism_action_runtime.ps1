@@ -58,16 +58,14 @@ int main(void)
     assert(poseStarts == 1U && mechanismState.target.liftDmm == 0U);
     mechanismActionService();
     assert(mechanismActionIndex == 1U && poseStarts == 1U);
-    mechanismState.pendingMotors = 0U;
-    clockMs += 100U;
+    clockMs = mechanismState.deadlineMs;
     assert(mechanismStateService(&mechanismState, clockMs, 0U) == MECHANISM_EVENT_DONE);
     mechanismActionService();
     assert(mechanismActionIndex == 2U);
     mechanismActionService();
     assert(poseStarts == 2U && mechanismState.target.liftDmm == 1300U);
     puts("PASS: pickup waits for the prior pose before lift");
-    mechanismState.pendingMotors = 0U;
-    clockMs += 100U;
+    clockMs = mechanismState.deadlineMs;
     mechanismStateService(&mechanismState, clockMs, 0U);
     mechanismActionService();
     mechanismActionService();
@@ -107,7 +105,7 @@ int main(void)
         assert(mechanismActionIndex == 1U && servoChannelMoving[1]);
         mechanismActionService();
         assert(mechanismState.running); /* Pose overlaps platform rotation. */
-        mechanismState.pendingMotors = 0U;
+        clockMs = mechanismState.deadlineMs;
         assert(mechanismStateService(&mechanismState, clockMs, 0U) == MECHANISM_EVENT_DONE);
         mechanismActionService();
         assert(mechanismActionIndex == 2U);
@@ -116,7 +114,7 @@ int main(void)
         servoChannelMoving[1] = 0U;
         mechanismActionService();
         assert(mechanismState.running && mechanismState.target.liftDmm == 300U);
-        mechanismState.pendingMotors = 0U;
+        clockMs = mechanismState.deadlineMs;
         mechanismStateService(&mechanismState, clockMs, 0U);
         mechanismActionService();
         mechanismActionService();
