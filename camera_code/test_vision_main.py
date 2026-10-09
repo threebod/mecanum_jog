@@ -3,7 +3,7 @@ import pathlib
 import sys
 import types
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
@@ -29,7 +29,8 @@ class VisionMainTest(unittest.TestCase):
         stable.center.return_value = [164, 121]
         with patch.object(entry.time, "monotonic", side_effect=times), \
                 patch.object(entry, "StableWindow", return_value=stable) as constructor, \
-                patch.object(entry, "find_material", return_value=found):
+                patch.object(entry, "find_material", return_value=found), \
+                patch.object(entry, "find_ring", return_value=found):
             if write_error:
                 with self.assertRaises(RuntimeError):
                     entry.main()
@@ -78,6 +79,21 @@ class VisionMainTest(unittest.TestCase):
         self.assertEqual([20, 0],
                          [call.args[0] for call in maix.pwm.PWM.return_value.duty.call_args_list])
         maix.uart.UART.return_value.close.assert_called_once()
+
+    def test_ring_resolution_switch_preserves_protocol_and_scales_overlay(self):
+        maix = self.run_camera(
+            [self.request(MODE_RING, 1), b"", b"", self.request(MODE_MATERIAL, 2)],
+            [0, 0.1, 0.2, 0.3], [False, False, True, False],
+            found=(168, 124, 80, 50, 50))
+        cam = maix.camera.Camera.return_value
+        self.assertEqual([call(640, 480), call(320, 240)],
+                         cam.set_resolution.call_args_list)
+        response = maix.uart.UART.return_value.write.call_args.args[0]
+        self.assertEqual([168, 124, 80, 50, 50, 0, 0, 0],
+                         Parser().feed(response)[0]["values"])
+        frame = cam.read.return_value
+        frame.draw_rect.assert_any_call(0, 0, 640, 480, maix.image.COLOR_YELLOW, 1)
+        frame.draw_cross.assert_any_call(336, 248, maix.image.COLOR_GREEN, 8, 2)
 
 
 if __name__ == "__main__":

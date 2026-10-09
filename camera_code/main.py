@@ -35,6 +35,8 @@ def main():
                         packet["token"], packet["mode"], packet["target"]))
                     request = packet
                     if packet["mode"] != light_mode:
+                        resolution = (640, 480) if packet["mode"] == MODE_RING else (320, 240)
+                        err.check_raise(cam.set_resolution(*resolution), "camera resolution")
                         illuminator.duty(20 if packet["mode"] == MODE_RING else 0)
                         light_mode = packet["mode"]
                     request_started = now_ms
@@ -69,12 +71,15 @@ def main():
                         request["token"], bool(flags)))
                     request = None
             if frame is not None:
+                scale = 2 if light_mode == MODE_RING else 1
                 if request is not None:
                     x, y, width, height, u, v, _, _ = request["values"]
-                    frame.draw_rect(x, y, width, height, image.COLOR_YELLOW, 1)
-                    frame.draw_cross(u, v, image.COLOR_RED, 8, 2)
+                    frame.draw_rect(x * scale, y * scale, width * scale, height * scale,
+                                    image.COLOR_YELLOW, 1)
+                    frame.draw_cross(u * scale, v * scale, image.COLOR_RED, 8, 2)
                 if found is not None:
-                    frame.draw_cross(int(found[0]), int(found[1]), image.COLOR_GREEN, 8, 2)
+                    frame.draw_cross(int(found[0] * scale), int(found[1] * scale),
+                                     image.COLOR_GREEN, 8, 2)
                 screen.show(frame)
     finally:
         illuminator.duty(0)

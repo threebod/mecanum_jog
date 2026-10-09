@@ -67,12 +67,16 @@ def find_ring(img, request, diagnostics=None):
         diagnostics.update(circles=[], targets=[])
     x, y, width, height, anchor_u, anchor_v, _, _ = request["values"]
     gray = image.image2cv(img.to_format(image.Format.FMT_GRAYSCALE), False, False)
-    roi = gray[y:y + height, x:x + width]
+    # Requests and results remain in the vehicle's 320x240 calibration coordinates.
+    scale = gray.shape[1] / 320
+    roi_x, roi_y = int(x * scale), int(y * scale)
+    roi = gray[roi_y:roi_y + int(height * scale),
+               roi_x:roi_x + int(width * scale)]
     if min(roi.shape[:2]) < 23:
         return None
     binary = cv2.adaptiveThreshold(cv2.GaussianBlur(roi, (3, 3), 0), 255,
                                    cv2.ADAPTIVE_THRESH_MEAN_C,
-                                   cv2.THRESH_BINARY_INV, 21, 10)
+                                   cv2.THRESH_BINARY_INV, int(20 * scale) + 1, 10)
     contours, hierarchy = cv2.findContours(binary, cv2.RETR_TREE,
                                             cv2.CHAIN_APPROX_SIMPLE)
     if hierarchy is None:
@@ -86,13 +90,14 @@ def find_ring(img, request, diagnostics=None):
         if hierarchy[0][index][2] < 0 and hierarchy[0][index][3] < 0:
             continue
         (center_x, center_y), radius = cv2.minEnclosingCircle(contour)
+        radius /= scale
         if not settings.RING_MIN_RADIUS <= radius <= settings.RING_MAX_RADIUS:
             continue
         moments = cv2.moments(contour)
         if moments["m00"] == 0:
             continue
-        circles.append((x + moments["m10"] / moments["m00"],
-                        y + moments["m01"] / moments["m00"], radius))
+        circles.append((x + moments["m10"] / moments["m00"] / scale,
+                        y + moments["m01"] / moments["m00"] / scale, radius))
     targets = _cluster_rings(circles)
     if diagnostics is not None:
         diagnostics.update(circles=circles, targets=targets)

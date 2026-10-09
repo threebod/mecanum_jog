@@ -1,11 +1,12 @@
 import pathlib
 import sys
+import types
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
-from vision_detectors import _cluster_rings, _unique_near, find_material
+from vision_detectors import _cluster_rings, _unique_near, find_material, find_ring
 import vision_settings as settings
 
 
@@ -69,6 +70,28 @@ class VisionDetectorTest(unittest.TestCase):
         self.assertEqual(1, len(targets))
         self.assertEqual((100, 80), targets[0][:2])
         self.assertEqual((40, 40), targets[0][3:])
+
+    def test_ring_resolution_preserves_center_and_diameter_with_offset_roi(self):
+        import cv2
+        import numpy as np
+
+        maix = types.ModuleType("maix")
+        maix.image = Mock()
+        request = {"values": [50, 30, 140, 130, 120, 90, 0, 0]}
+        results = []
+        for scale in (1, 2):
+            gray = np.full((240 * scale, 320 * scale), 255, dtype=np.uint8)
+            for radius in (24, 40):
+                cv2.circle(gray, (120 * scale, 90 * scale), radius * scale,
+                           0, 3 * scale)
+            maix.image.image2cv.return_value = gray
+            with patch.dict(sys.modules, {"maix": maix}):
+                result = find_ring(Mock(), request)
+            self.assertIsNotNone(result)
+            self.assertLessEqual(abs(result[0] - 120), 1)
+            self.assertLessEqual(abs(result[1] - 90), 1)
+            results.append(result)
+        self.assertLessEqual(abs(results[0][3] - results[1][3]), 2)
 
 
 if __name__ == "__main__":
