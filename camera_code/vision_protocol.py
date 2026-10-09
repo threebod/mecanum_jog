@@ -75,16 +75,28 @@ class StableWindow:
                 min(sample[i] for sample in next_samples) > self.tolerance
                 for i in (0, 1)):
             self.reset()
+        if self.samples and len(point) > 5 and point[5] != self.samples[-1][5]:
+            self.reset()
         if not self.samples:
             self.started_ms = now_ms
         self.samples.append(point)
         return len(self.samples) >= self.count and now_ms - self.started_ms >= self.minimum_ms
 
+    def center(self):
+        centers = []
+        for axis in (0, 1):
+            values = sorted(sample[axis] for sample in self.samples)
+            middle = len(values) // 2
+            centers.append(int(round((values[middle] + values[~middle]) / 2)))
+        return centers
+
 
 def validate_request(packet):
     if packet["kind"] != KIND_REQUEST or packet["mode"] not in (MODE_MATERIAL, MODE_RING):
         return False
-    if packet["mode"] == MODE_MATERIAL and not 1 <= packet["selector"] <= 6:
+    if packet["mode"] == MODE_MATERIAL and not 0 <= packet["selector"] <= 6:
+        return False
+    if packet["mode"] == MODE_MATERIAL and not 0 <= packet["values"][6] <= 63:
         return False
     if packet["mode"] == MODE_RING and not 1 <= packet["target"] <= 3:
         return False

@@ -5,7 +5,7 @@ files:
   - vision_settings.py
 id: gongchuang_vision
 name: 视觉二次定位
-version: 1.0.1
+version: 1.0.6
 author: shanxincheng
 icon: ''
 desc: aixCAM2 物料与圆环识别，向主控回传识别结果

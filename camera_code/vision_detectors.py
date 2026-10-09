@@ -12,18 +12,22 @@ def _unique_near(candidates, anchor, radius):
 def find_material(img, request):
     x, y, width, height, anchor_u, anchor_v, _, _ = request["values"]
     candidates = []
-    threshold = settings.COLOR_THRESHOLDS[request["selector"]]
-    for blob in img.find_blobs([threshold], roi=(x, y, width, height),
-                               area_threshold=50, pixels_threshold=50):
-        area = blob.w() * blob.h()
-        if not settings.MATERIAL_AREA[0] <= area <= settings.MATERIAL_AREA[1]:
+    mask = request["values"][6]
+    for color, threshold in settings.COLOR_THRESHOLDS.items():
+        if request["selector"] not in (0, color) or \
+                (mask and not mask & (1 << (color - 1))):
             continue
-        if blob.x() <= x or blob.y() <= y or \
-                blob.x() + blob.w() >= x + width or \
-                blob.y() + blob.h() >= y + height:
-            continue
-        quality = min(100, int(blob.pixels() * 100 / max(area, 1)))
-        candidates.append((blob.cx(), blob.cy(), quality, blob.w(), blob.h()))
+        for blob in img.find_blobs([threshold], roi=(x, y, width, height),
+                                   area_threshold=50, pixels_threshold=50):
+            area = blob.w() * blob.h()
+            if not settings.MATERIAL_AREA[0] <= area <= settings.MATERIAL_AREA[1]:
+                continue
+            if blob.x() <= x or blob.y() <= y or \
+                    blob.x() + blob.w() >= x + width or \
+                    blob.y() + blob.h() >= y + height:
+                continue
+            quality = min(100, int(blob.pixels() * 100 / max(area, 1)))
+            candidates.append((blob.cx(), blob.cy(), quality, blob.w(), blob.h(), color))
     return _unique_near(candidates, (anchor_u, anchor_v), max(width, height))
 
 
@@ -54,10 +58,13 @@ def _cluster_rings(circles):
     return targets
 
 
-def find_ring(img, request):
+def find_ring(img, request, diagnostics=None):
     import cv2
     from maix import image
 
+    if diagnostics is not None:
+        diagnostics.clear()
+        diagnostics.update(circles=[], targets=[])
     x, y, width, height, anchor_u, anchor_v, _, _ = request["values"]
     gray = image.image2cv(img.to_format(image.Format.FMT_GRAYSCALE), False, False)
     roi = gray[y:y + height, x:x + width]
@@ -86,5 +93,7 @@ def find_ring(img, request):
             continue
         circles.append((x + moments["m10"] / moments["m00"],
                         y + moments["m01"] / moments["m00"], radius))
-    return _unique_near(_cluster_rings(circles), (anchor_u, anchor_v),
-                        max(width, height))
+    targets = _cluster_rings(circles)
+    if diagnostics is not None:
+        diagnostics.update(circles=circles, targets=targets)
+    return _unique_near(targets, (anchor_u, anchor_v), max(width, height))

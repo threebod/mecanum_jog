@@ -1,7 +1,7 @@
 """MaixCAM vehicle alignment entry point. Deploy this directory together."""
 import time
 
-from maix import app, camera, display, err, gpio, image, pinmap, uart
+from maix import app, camera, display, err, pwm, image, pinmap, uart
 
 from vision_detectors import find_material, find_ring
 from vision_protocol import (FLAG_STABLE, FLAG_VALID, KIND_RESULT, MODE_MATERIAL, MODE_RING,
@@ -10,9 +10,8 @@ import vision_settings as settings
 
 
 def main():
-    err.check_raise(pinmap.set_pin_function("B25", "GPIOB25"), "illumination pin mapping")
-    illuminator = gpio.GPIO("GPIOB25", gpio.Mode.OUT)
-    illuminator.value(0)
+    err.check_raise(pinmap.set_pin_function("B25", "PWM6"), "illumination PWM mapping")
+    illuminator = pwm.PWM(6, freq=100000, duty=0, enable=True)
     for pin, function in settings.UART_PINS.items():
         err.check_raise(pinmap.set_pin_function(pin, function), "UART pin mapping")
     serial = uart.UART(settings.UART_DEVICE, settings.BAUD)
@@ -21,6 +20,7 @@ def main():
     parser = Parser()
     stable = StableWindow()
     request = None
+    light_mode = MODE_MATERIAL
     request_started = 0
     discard_frames = 0
     try:
@@ -34,9 +34,14 @@ def main():
                     print("VISION REQUEST token={} mode={} target={}".format(
                         packet["token"], packet["mode"], packet["target"]))
                     request = packet
+                    if packet["mode"] != light_mode:
+                        illuminator.duty(20 if packet["mode"] == MODE_RING else 0)
+                        light_mode = packet["mode"]
                     request_started = now_ms
                     discard_frames = 2
-                    stable = StableWindow(minimum_ms=500 if packet["mode"] == MODE_MATERIAL
+                    pickup = packet["mode"] == MODE_MATERIAL and packet["target"] == 0
+                    stable = StableWindow(tolerance=8 if pickup else 2,
+                                          minimum_ms=500 if packet["mode"] == MODE_MATERIAL
                                           else 180)
             frame = cam.read()
             found = None
@@ -51,7 +56,9 @@ def main():
                 if confirmed or now_ms - request_started >= timeout_ms:
                     values = [0] * 8
                     if found is not None:
-                        values[:5] = found
+                        values[:len(found)] = found
+                        if confirmed and request["mode"] == MODE_MATERIAL and request["target"] == 0:
+                            values[:2] = stable.center()
                     flags = FLAG_VALID | FLAG_STABLE if confirmed else 0
                     response = encode(KIND_RESULT, request["token"], request["mode"],
                                       request["selector"], request["target"],
@@ -70,6 +77,7 @@ def main():
                     frame.draw_cross(int(found[0]), int(found[1]), image.COLOR_GREEN, 8, 2)
                 screen.show(frame)
     finally:
+        illuminator.duty(0)
         serial.close()
 
 
