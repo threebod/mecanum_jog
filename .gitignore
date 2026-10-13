@@ -4,6 +4,14 @@ Listings/
 build.log
 build_*.log
 camera_code/dist/
+*.log
+/dist/
+/camera_code.zip
+__pycache__/
+*.py[cod]
+
+# Local Wi-Fi credentials; copy wifi_config.example.py before deployment
+/camera_code/K230/wifi_config.py
 
 # Keil machine-specific files
 DebugConfig/
