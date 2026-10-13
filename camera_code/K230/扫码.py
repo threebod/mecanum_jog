@@ -8,6 +8,8 @@ from machine import FPIOA, UART
 
 from qr_protocol import encode_qr_result
 
+UART_BAUD = 115200
+
 
 def init_camera():
     """
@@ -58,7 +60,7 @@ def main():
     fpioa = FPIOA()
     fpioa.set_function(9, FPIOA.UART1_TXD)
     fpioa.set_function(10, FPIOA.UART1_RXD)
-    uart = UART(UART.UART1, baudrate=115200, bits=UART.EIGHTBITS,
+    uart = UART(UART.UART1, baudrate=UART_BAUD, bits=UART.EIGHTBITS,
                 parity=UART.PARITY_NONE, stop=UART.STOPBITS_ONE)
     init_display(sensor)
     MediaManager.init()
@@ -66,8 +68,6 @@ def main():
 
     # Initialize FPS clock | 初始化FPS计时器
     clock = time.clock()
-    last_payload = None
-    last_sent_ms = 0
 
     try:
         while True:
@@ -81,16 +81,15 @@ def main():
 
             # Process detection results | 处理检测结果
             payload = process_qrcode(img, qr_codes)
-            if payload is None:
-                last_payload = None
-            else:
-                now_ms = time.ticks_ms()
-                if payload != last_payload or time.ticks_diff(now_ms, last_sent_ms) >= 1000:
-                    line = encode_qr_result(payload)
-                    if line is not None and uart.write(line) != len(line):
+            if payload is not None:
+                line = encode_qr_result(payload)
+                if line is not None:
+                    if uart.write(line) != len(line):
                         raise RuntimeError("QR UART short write")
-                    last_payload = payload
-                    last_sent_ms = now_ms
+                    # Allow this 8N1 line to finish transmitting before UART deinit.
+                    time.sleep_ms((len(line) * 10000 + UART_BAUD - 1) // UART_BAUD)
+                    print("QR SENT; stopping camera")
+                    break
 
             # Display result | 显示结果
             Display.show_image(img)
@@ -100,9 +99,11 @@ def main():
         print("Program terminated by user")
         # Clean up resources | 清理资源
     finally:
-        uart.deinit()
-        sensor.close()
+        sensor.stop()
+        Display.deinit()
+        time.sleep_ms(100)
         MediaManager.deinit()
+        uart.deinit()
         gc.collect()
 
 if __name__ == "__main__":

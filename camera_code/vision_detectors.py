@@ -1,6 +1,7 @@
 import math
 
 import vision_settings as settings
+from vision_protocol import FLAG_RING_NO_DIGIT
 
 
 def _unique_near(candidates, anchor, radius):
@@ -9,26 +10,36 @@ def _unique_near(candidates, anchor, radius):
     return selected[0] if len(selected) == 1 else None
 
 
-def find_material(img, request):
-    x, y, width, height, anchor_u, anchor_v, _, _ = request["values"]
+def find_material(img, request, scale=1):
+    x, y, width, height = request["values"][:4]
+    # Pickup uses the top 3/4 of the 320x240 protocol image to exclude the gripper.
+    if request.get("target", 0) == 0:
+        height = min(y + height, 180) - y
+        if height <= 0:
+            return None
     candidates = []
     mask = request["values"][6]
     for color, threshold in settings.COLOR_THRESHOLDS.items():
         if request["selector"] not in (0, color) or \
                 (mask and not mask & (1 << (color - 1))):
             continue
-        for blob in img.find_blobs([threshold], roi=(x, y, width, height),
-                                   area_threshold=50, pixels_threshold=50):
-            area = blob.w() * blob.h()
-            if not settings.MATERIAL_AREA[0] <= area <= settings.MATERIAL_AREA[1]:
-                continue
-            if blob.x() <= x or blob.y() <= y or \
-                    blob.x() + blob.w() >= x + width or \
-                    blob.y() + blob.h() >= y + height:
-                continue
-            quality = min(100, int(blob.pixels() * 100 / max(area, 1)))
-            candidates.append((blob.cx(), blob.cy(), quality, blob.w(), blob.h(), color))
-    return _unique_near(candidates, (anchor_u, anchor_v), max(width, height))
+        blobs = img.find_blobs([threshold],
+                               roi=tuple(int(value * scale) for value in (x, y, width, height)),
+                               area_threshold=50, pixels_threshold=50)
+        if not blobs:
+            continue
+        blob = max(blobs, key=lambda blob: blob.area())
+        area = blob.area()
+        if not settings.MATERIAL_AREA[0] * scale ** 2 <= area <= \
+                settings.MATERIAL_AREA[1] * scale ** 2:
+            continue
+        if max(blob.w(), blob.h()) / min(blob.w(), blob.h()) > 1.4:
+            continue
+        quality = min(100, int(blob.pixels() * 100 / max(area, 1)))
+        candidates.append((area, (int(round(blob.cx() / scale)), int(round(blob.cy() / scale)),
+                                  quality, int(round(blob.w() / scale)),
+                                  int(round(blob.h() / scale)), color)))
+    return max(candidates, key=lambda item: item[0])[1] if candidates else None
 
 
 def _cluster_rings(circles):
@@ -64,7 +75,9 @@ def find_ring(img, request, diagnostics=None):
 
     if diagnostics is not None:
         diagnostics.clear()
-        diagnostics.update(circles=[], targets=[])
+        diagnostics.update(circles=[], targets=[], digits=[])
+    if request["target"] != 2:
+        return None
     x, y, width, height, anchor_u, anchor_v, _, _ = request["values"]
     gray = image.image2cv(img.to_format(image.Format.FMT_GRAYSCALE), False, False)
     # Requests and results remain in the vehicle's 320x240 calibration coordinates.
@@ -99,6 +112,25 @@ def find_ring(img, request, diagnostics=None):
         circles.append((x + moments["m10"] / moments["m00"] / scale,
                         y + moments["m01"] / moments["m00"] / scale, radius))
     targets = _cluster_rings(circles)
+    if request.get("flags", 0) & FLAG_RING_NO_DIGIT:
+        if diagnostics is not None:
+            diagnostics.update(circles=circles, targets=targets)
+        if len(targets) > 1:
+            material = find_material(img, request, scale=scale)
+            if material is None:
+                return None
+            return min(targets, key=lambda target: math.hypot(
+                target[0] - material[0], target[1] - material[1]))
+        return _unique_near(targets, (anchor_u, anchor_v), max(width, height))
+    from ring_digits import read_ring_digit
+
+    numbered_targets = []
+    digits = []
+    for target in targets:
+        digit, score = read_ring_digit(gray, target, scale)
+        digits.append((target[0], target[1], digit, score))
+        if digit == 2:
+            numbered_targets.append(target)
     if diagnostics is not None:
-        diagnostics.update(circles=circles, targets=targets)
-    return _unique_near(targets, (anchor_u, anchor_v), max(width, height))
+        diagnostics.update(circles=circles, targets=numbered_targets, digits=digits)
+    return _unique_near(numbered_targets, (anchor_u, anchor_v), max(width, height))

@@ -5,13 +5,16 @@ BAUD = 9600
 COLOR_THRESHOLDS = {
     1: [30, 80, 55, 105, 25, 80],
     2: [50, 105, -30, 25, 35, 100],
-    3: [0, 40, 8, 35, -60, -30],
+    3: [17, 37, 8, 32, -59, -35],
     4: [50, 100, -100, -50, 20, 80],
-    5: [0, 20, -13, 11, -11, 13],
-    6: [33, 75, -20, 5, -32, -8],
+    5: [8, 25, -14, 10, -8, 16],
+    6: [50, 84, -27, -3, -36, -12],
 }
 MATERIAL_AREA = (1500, 30000)
 RING_CENTER_TOLERANCE = 8
 RING_MIN_RADIUS = 8
 RING_MAX_RADIUS = 150
 RING_MIN_DISTINCT_RADII = 2
+RING_DIGIT_ROI_RATIO = 0.44
+RING_DIGIT_MIN_SCORE = 0.60
+RING_DIGIT_SCORE_MARGIN = 0.10

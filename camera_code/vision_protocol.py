@@ -9,6 +9,7 @@ MODE_MATERIAL = 1
 MODE_RING = 2
 FLAG_VALID = 1
 FLAG_STABLE = 2
+FLAG_RING_NO_DIGIT = 4  # Request only; selector carries the fallback material color.
 
 
 def crc16(data):
@@ -55,10 +56,11 @@ class Parser:
 
 
 class StableWindow:
-    def __init__(self, count=5, tolerance=2, minimum_ms=180):
+    def __init__(self, count=5, tolerance=2, minimum_ms=180, trend_tolerance=None):
         self.count = count
         self.tolerance = tolerance
         self.minimum_ms = minimum_ms
+        self.trend_tolerance = trend_tolerance
         self.reset()
 
     def reset(self):
@@ -80,7 +82,18 @@ class StableWindow:
         if not self.samples:
             self.started_ms = now_ms
         self.samples.append(point)
-        return len(self.samples) >= self.count and now_ms - self.started_ms >= self.minimum_ms
+        if len(self.samples) < self.count or now_ms - self.started_ms < self.minimum_ms:
+            return False
+        # Pickup compares the first and last five-frame center medians.
+        if self.trend_tolerance is not None and any(
+                abs(sorted(sample[axis] for sample in self.samples[:5])[2] -
+                    sorted(sample[axis] for sample in self.samples[-5:])[2]) >
+                self.trend_tolerance for axis in (0, 1)):
+            self.reset()
+            self.samples.append(point)
+            self.started_ms = now_ms
+            return False
+        return True
 
     def center(self):
         centers = []
@@ -99,6 +112,9 @@ def validate_request(packet):
     if packet["mode"] == MODE_MATERIAL and not 0 <= packet["values"][6] <= 63:
         return False
     if packet["mode"] == MODE_RING and not 1 <= packet["target"] <= 3:
+        return False
+    if packet["mode"] == MODE_RING and packet["flags"] & FLAG_RING_NO_DIGIT and (
+            packet["target"] != 2 or not 1 <= packet["selector"] <= 6):
         return False
     x, y, width, height, u, v, _, _ = packet["values"]
     return (0 <= x < 320 and 0 <= y < 240 and width > 0 and height > 0 and
