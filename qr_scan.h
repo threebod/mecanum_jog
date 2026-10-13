@@ -17,7 +17,7 @@ static void qr_scan_init(QrScanParser *parser)
     parser->invalid = 0U;
 }
 
-/* K230 sends QR:<UTF-8 payload>\n. Only display data reaches this port. */
+/* K230 sends QR:<UTF-8 payload>\n; the mission validates task codes separately. */
 static uint8_t qr_scan_feed(QrScanParser *parser, uint8_t byte,
                             char result[QR_SCAN_PAYLOAD_MAX + 1U])
 {

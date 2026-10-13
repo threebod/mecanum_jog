@@ -22,21 +22,36 @@
 #define ROUTE_HEADING_KD    0.12f
 #define ROUTE_HEADING_MAX_RPM 12.0f
 #define ROUTE_HEADING_INTEGRAL_LIMIT 12.0f
-#define ROUTE_COUNT         16U
+#define ROUTE_COUNT         18U
 typedef struct { int16_t x, y; const char *event; int8_t heading; } RoutePoint;
-static const RoutePoint routeTemplate[ROUTE_COUNT] = {
-    {2100,2250,0,4}, {2100,1200,"QR",-1}, {2100,2080,0,4},
-    {1200,2080,"RAW_1",1}, {1200,400,"COARSE_1_DROP_PICK",-1},
-    {1200,1200,0,4}, {400,1200,"TEMP_1_DROP",2}, {1200,1200,0,4},
-    {1200,2080,"RAW_2",1}, {1200,400,"COARSE_2_DROP_PICK",-1},
-    {1200,1200,0,4}, {400,1200,"TEMP_2_STACK",2}, {1200,1200,0,4},
-    {2100,1200,0,0}, {2100,2250,0,4}, {2250,2250,"HOME",4}
+/* Task routes execute one signed map-axis distance per leg, in mm.
+ * Heading 4 keeps the current heading; departure turns happen before travel. */
+typedef struct {
+    int16_t upMm, rightMm;
+    const char *event;
+    int8_t departureHeading, heading;
+} RouteLeg;
+static const RouteLeg routeDistanceZone1[ROUTE_COUNT] = {
+    {0,-200,0,4,4}, {-1050,0,"QR",4,-1}, {830,0,0,0,1},
+    {0,-930,"RAW_1",4,1}, {0,-860,0,4,2},
+    {-1690,0,0,4,-1}, {0,860,"COARSE_1_DROP_PICK",4,-1},
+    {0,-860,0,4,2}, {850,0,"TEMP_1_DROP",4,2}, {880,0,0,4,1},
+    {0,850,"RAW_2",4,1}, {-1690,0,"COARSE_2_DROP_PICK",2,-1},
+    {0,-860,0,4,2}, {850,0,"TEMP_2_STACK",4,2}, {880,0,0,4,-1},
+    {0,1700,0,4,4}, {220,0,0,4,4}, {0,150,"HOME",4,4}
 };
-static RoutePoint routePoint(uint8_t index, uint8_t start)
+static const RouteLeg routeDistanceZone2[ROUTE_COUNT] = {
+    {0,-150,0,4,4}, {1050,0,"QR",4,-1}, {825,0,0,0,1},
+    {0,-930,"RAW_1",4,1}, {0,-860,0,4,2},
+    {-1690,0,0,4,-1}, {0,860,"COARSE_1_DROP_PICK",4,-1},
+    {0,-860,0,4,2}, {850,0,"TEMP_1_DROP",4,2}, {890,0,0,4,1},
+    {0,850,"RAW_2",4,1}, {-1690,0,"COARSE_2_DROP_PICK",2,-1},
+    {0,-860,0,4,2}, {850,0,"TEMP_2_STACK",4,2}, {-850,0,0,4,-1},
+    {0,1700,0,4,4}, {-200,0,0,4,4}, {0,150,"HOME",4,4}
+};
+static RouteLeg routeDistanceLeg(uint8_t index, uint8_t start)
 {
-    RoutePoint p = routeTemplate[index];
-    if (start == 2U && (index == 0U || index >= 14U)) p.y = 150;
-    return p;
+    return start == 2U ? routeDistanceZone2[index] : routeDistanceZone1[index];
 }
 static float routeAbs(float value) { return value < 0.0f ? -value : value; }
 typedef struct {
@@ -77,7 +92,7 @@ static float routeHeadingPidStep(RouteHeadingPid *pid,
         pid->previousYaw = yaw;
         pid->previousSampleMs = sampleMs;
     }
-    proportional = routeAbs(error) < 0.6f ? 0.0f : error;
+    proportional = routeAbs(error) < 0.3f ? 0.0f : error;
     if (proportional != 0.0f && routeAbs(error) <= 8.0f) {
         candidate = pid->integral + error * dt / 1000.0f;
         if (candidate > ROUTE_HEADING_INTEGRAL_LIMIT)

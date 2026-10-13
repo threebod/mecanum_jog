@@ -1,0 +1,11 @@
+#ifndef MECANUM_AVOIDANCE_REGIONS_H
+#define MECANUM_AVOIDANCE_REGIONS_H
+#include <stdint.h>
+#define AV_REGION_COUNT 9U
+typedef struct { int16_t x0,y0,x1,y1; } AvRegion;
+static const AvRegion avRegions[AV_REGION_COUNT] = {
+    {0,1850,550,2400},{0,0,550,550},{1850,1400,2400,1850},{1850,550,2400,1000},
+    {1000,1400,1400,1850},{1000,550,1400,1000},{550,1000,1000,1400},
+    {1400,1000,1850,1400},{1000,1000,1400,1400}
+};
+#endif

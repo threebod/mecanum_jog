@@ -8,14 +8,17 @@
 
 #define MECHANISM_HORIZONTAL_MIN_DMM (-1220)
 #define MECHANISM_HORIZONTAL_MAX_DMM 650
+#define MECHANISM_HORIZONTAL_MARGIN_MS 50U
 #define MECHANISM_LIFT_MAX_DMM 1500U
 #define MECHANISM_TURRET_MAX_DDEG 3600U
 #define MECHANISM_RPM_MIN 10U
 #define MECHANISM_RPM_MAX 1200U
+#define MECHANISM_LIFT_RPM_MAX 2000U
 #define MECHANISM_ACCEL_MIN 1U
 #define MECHANISM_ACCEL_MAX 200U
+#define MECHANISM_LIFT_ACCEL_MAX 240U
 #define MECHANISM_TURRET_SPEED_MIN 10U
-#define MECHANISM_TURRET_SPEED_MAX 1800U
+#define MECHANISM_TURRET_SPEED_MAX 2200U
 
 typedef struct {
     int16_t horizontalDmm;
@@ -113,11 +116,11 @@ static uint8_t mechanismPoseValid(const MechanismPose *pose)
            pose->horizontalRpm >= MECHANISM_RPM_MIN &&
            pose->horizontalRpm <= MECHANISM_RPM_MAX &&
            pose->liftRpm >= MECHANISM_RPM_MIN &&
-           pose->liftRpm <= MECHANISM_RPM_MAX &&
+           pose->liftRpm <= MECHANISM_LIFT_RPM_MAX &&
            pose->horizontalAccel >= MECHANISM_ACCEL_MIN &&
            pose->horizontalAccel <= MECHANISM_ACCEL_MAX &&
            pose->liftAccel >= MECHANISM_ACCEL_MIN &&
-           pose->liftAccel <= MECHANISM_ACCEL_MAX &&
+           pose->liftAccel <= MECHANISM_LIFT_ACCEL_MAX &&
            pose->turretDps10 >= MECHANISM_TURRET_SPEED_MIN &&
            pose->turretDps10 <= MECHANISM_TURRET_SPEED_MAX;
 }
@@ -166,7 +169,8 @@ static uint32_t mechanismMoveDurationMs(const MechanismPose *current,
         (uint16_t)(current->turretDdeg - target->turretDdeg);
     uint32_t horizontalMs = mechanismMotorDurationMs(
         mechanismHorizontalPulses(horizontalDelta), target->horizontalRpm,
-        target->horizontalAccel);
+        target->horizontalAccel) +
+        (horizontalDelta == 0 ? 0U : MECHANISM_HORIZONTAL_MARGIN_MS);
     uint32_t liftMs = mechanismMotorDurationMs(
         mechanismLiftPulses(liftDelta), target->liftRpm, target->liftAccel);
     uint32_t turretMs = turretDelta == 0U ? 0U :
@@ -237,9 +241,9 @@ static uint8_t mechanismParseCommand(const char *text, MechanismCommand *command
         pose.turretDdeg = turret;
         pose.horizontalRpm = 30U;
         pose.horizontalAccel = 50U;
-        pose.liftRpm = 30U;
-        pose.liftAccel = 50U;
-        pose.turretDps10 = 1200U;
+        pose.liftRpm = 2000U;
+        pose.liftAccel = 240U;
+        pose.turretDps10 = 2200U;
         if (!mechanismPoseValid(&pose)) return 0U;
         command->type = MECHANISM_COMMAND_INIT;
         command->pose = pose;

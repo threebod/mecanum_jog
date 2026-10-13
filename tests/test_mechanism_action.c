@@ -11,7 +11,7 @@ static void assertCoarseMotorSettings(const MechanismPose *pose)
     assert(pose->horizontalAccel == missionCoarseInitial.pose.horizontalAccel);
     assert(pose->liftRpm == missionCoarseInitial.pose.liftRpm);
     assert(pose->liftAccel == missionCoarseInitial.pose.liftAccel);
-    assert(pose->turretDps10 == 1200U);
+    assert(pose->turretDps10 == 2200U);
 }
 
 int main(void)
@@ -19,7 +19,7 @@ int main(void)
     MechanismCommand command;
     MechanismState state;
     MechanismPose pose = {-1220, 0, 0, 10, 1, 10, 1, 10};
-    MechanismPose fast = {650, 1500, 3600, 1200, 200, 1200, 200, 1800};
+    MechanismPose fast = {650, 1500, 3600, 1200, 200, 2000, 240, 2200};
     MechanismPose invalid = fast;
     MechanismPose liftStart = {0, 0, 0, 1000, 200, 1000, 200, 1200};
     MechanismPose liftTarget = {0, 1300, 0, 1000, 200, 1000, 200, 1200};
@@ -53,13 +53,19 @@ int main(void)
     invalid.horizontalRpm = 9;
     assert(!mechanismPoseValid(&invalid));
     invalid = fast;
-    invalid.liftAccel = 201;
+    invalid.liftAccel = 241;
+    assert(!mechanismPoseValid(&invalid));
+    invalid = fast;
+    invalid.liftRpm = 2001;
+    assert(!mechanismPoseValid(&invalid));
+    invalid = fast;
+    invalid.horizontalAccel = 201;
     assert(!mechanismPoseValid(&invalid));
     invalid = fast;
     invalid.horizontalRpm = 1201;
     assert(!mechanismPoseValid(&invalid));
     invalid = fast;
-    invalid.turretDps10 = 1801;
+    invalid.turretDps10 = 2201;
     assert(!mechanismPoseValid(&invalid));
 
     assert(mechanismHorizontalPulses(480) == 1222U);
@@ -71,10 +77,11 @@ int main(void)
     /* 130 mm lift: 10400 pulses, acceleration 200 => 2.8 ms per RPM. */
     assert(mechanismMotorDurationMs(10400U, 1000U, 200U) == 1478U);
     assert(mechanismMotorDurationMs(10400U, 1200U, 200U) == 1478U);
+    assert(mechanismMotorDurationMs(10400U, 2000U, 240U) == 790U);
     assert(mechanismMotorDurationMs(320000U, 1000U, 200U) == 8800U);
     assert(mechanismMotorDurationMs(320000U, 1000U, 0U) == 6000U);
     assert(mechanismMoveDurationMs(&pose, &pose) == 0U);
-    assert(mechanismMoveDurationMs(&pose, &fast) == 3760U);
+    assert(mechanismMoveDurationMs(&pose, &fast) == 3080U);
     {
         MechanismPose turretStart = {0, 0, 0, 30, 50, 30, 50, 1200};
         MechanismPose turretTarget = turretStart;
@@ -88,15 +95,21 @@ int main(void)
     }
 
     assert(mechanismParseCommand("mech init 0 0 684", &command));
+    assert(command.pose.liftRpm == 2000U && command.pose.liftAccel == 240U);
     assert(command.type == MECHANISM_COMMAND_INIT);
     assert(command.pose.horizontalDmm == 0 && command.pose.turretDdeg == 684U &&
-           command.pose.turretDps10 == 1200U);
+           command.pose.turretDps10 == 2200U);
     assert(mechanismParseCommand(
         "mech pose -480 1500 1350 30 50 30 50 130", &command));
     assert(mechanismParseCommand(
         "mech pose -480 1500 1350 1200 200 1200 200 130", &command));
     assert(command.type == MECHANISM_COMMAND_POSE);
     assert(command.pose.horizontalDmm == -480 && command.pose.liftDmm == 1500U);
+    assert(mechanismParseCommand("mech pose 0 0 650 1000 200 1000 200 2200", &command));
+    assert(mechanismParseCommand("mech pose 0 1300 650 1000 200 2000 240 2200", &command));
+    assert(!mechanismParseCommand("mech pose 0 1300 650 1000 200 2001 240 2200", &command));
+    assert(!mechanismParseCommand("mech pose 0 1300 650 1000 200 2000 241 2200", &command));
+    assert(!mechanismParseCommand("mech pose 0 0 650 1000 200 1000 200 2201", &command));
     assert(mechanismParseCommand("mech status", &command));
     assert(command.type == MECHANISM_COMMAND_STATUS);
     assert(!mechanismParseCommand("mech init -1221 0 0", &command));
@@ -140,11 +153,14 @@ int main(void)
     assert(actions[3].type == MECHANISM_ACTION_PLATFORM && actions[3].value == 3U);
     assert(actions[4].type == MECHANISM_ACTION_SERVO && actions[4].channel == 4U);
     assert(actions[5].type == MECHANISM_ACTION_WAIT && actions[5].waitMs == 750U);
-    assert(RAW_PICK_ACTION_COUNT == 13U);
-    assert(rawPickObservePose.horizontalDmm == -500);
+    assert(RAW_PICK_ACTION_COUNT == 12U);
+    assert(rawPickObservePose.horizontalDmm == -770 && rawPickObservePose.liftDmm == 0U);
+    assert(rawPickLowerPose.horizontalDmm == -770 && rawPickLowerPose.liftDmm == 500U &&
+           rawPickLowerPose.turretDdeg == rawPickObservePose.turretDdeg);
     assertCoarseMotorSettings(&rawPickInitial.pose);
     assertCoarseMotorSettings(&rawPickObservePose);
-    assert(rawPickInitial.gripperOpenDeg == 70U &&
+    assertCoarseMotorSettings(&rawPickLowerPose);
+    assert(rawPickInitial.gripperOpenDeg == 90U &&
            rawPickInitial.gripperCloseDeg == 35U);
     assert(rawPickInitial.platformDeg[0] == 26U &&
            rawPickInitial.platformDeg[1] == 146U &&
@@ -159,10 +175,13 @@ int main(void)
         rawPickActionsForSlot(slotActions, (uint8_t)index);
         assert(slotActions[0].type == MECHANISM_ACTION_PLATFORM);
         assert(slotActions[0].value == index);
-        assert(slotActions[11].value == (index < 3U ? index + 1U : 3U));
-        assert(slotActions[4].type == MECHANISM_ACTION_GRIPPER);
-        assert(slotActions[3].pose.liftDmm == 500U);
-        assert(slotActions[9].type == MECHANISM_ACTION_GRIPPER);
+        assert(slotActions[10].value == (index < 3U ? index + 1U : 3U));
+        assert(slotActions[3].type == MECHANISM_ACTION_GRIPPER && slotActions[3].value == 0U);
+        assert(slotActions[2].pose.liftDmm == 500U);
+        assert(slotActions[4].pose.liftDmm == 0U); /* Raise only after closing. */
+        assert(slotActions[8].type == MECHANISM_ACTION_GRIPPER);
+        assert(slotActions[11].pose.turretDdeg == (index == 3U ? 650U : 2720U));
+        assert(slotActions[11].pose.horizontalDmm == 0 && slotActions[11].pose.liftDmm == 0U);
         {
             uint16_t actionIndex;
             for (actionIndex = 0U; actionIndex < RAW_PICK_ACTION_COUNT; ++actionIndex) {
@@ -171,14 +190,27 @@ int main(void)
             }
         }
     }
-    assert(rawPickActions[0].value == 1U && rawPickActions[11].value == 2U);
+    assert(rawPickActions[0].value == 1U && rawPickActions[10].value == 2U);
+    assert(rawPickInitial.pose.horizontalRpm == 1000U &&
+           rawPickInitial.pose.turretDps10 == 2200U &&
+           rawPickLowerPose.horizontalRpm == 1000U && rawPickTravelPose.horizontalRpm == 1000U &&
+           rawPickLowerPose.turretDps10 == 2200U && rawPickTravelPose.turretDps10 == 2200U);
+    for(index=0;index<RAW_PICK_ACTION_COUNT;++index)
+        if(rawPickActions[index].type==MECHANISM_ACTION_POSE) assert(rawPickActions[index].pose.horizontalRpm==1000U);
+    for(index=0;index<MISSION_PLACE_COUNT;++index)
+        if(missionPlaceActions[index].type==MECHANISM_ACTION_POSE) assert(missionPlaceActions[index].pose.horizontalRpm==1000U);
+    for(index=0;index<MISSION_COARSE_PLACE_COUNT;++index)
+        if(missionCoarsePlaceActions[index].type==MECHANISM_ACTION_POSE) assert(missionCoarsePlaceActions[index].pose.horizontalRpm==1000U);
+    assert(rawPickObservePose.horizontalRpm == 1000U &&
+           rawPickObservePose.horizontalAccel == 200U);
 
-    assert(MISSION_COARSE_PLACE_COUNT == 32U);
-    assert(missionCoarseInitial.pose.horizontalRpm == 80U &&
-           missionCoarseInitial.pose.liftRpm == 1000U &&
-           missionCoarseInitial.pose.liftAccel == 200U &&
-           missionCoarseInitial.pose.turretDps10 == 1800U);
-    assert(missionCoarsePlaceActions[8].pose.liftDmm == 1480U);
+    assert(MISSION_COARSE_PLACE_COUNT == 31U);
+    assert(missionCoarseInitial.pose.horizontalRpm == 1000U &&
+           missionCoarseInitial.pose.horizontalAccel == 200U &&
+           missionCoarseInitial.pose.liftRpm == 2000U &&
+           missionCoarseInitial.pose.liftAccel == 240U &&
+           missionCoarseInitial.pose.turretDps10 == 2200U);
+    assert(missionCoarsePlaceActions[8].pose.liftDmm == 1300U);
     assert(missionCoarsePlaceActions[17].pose.liftDmm == 1300U);
     assert(missionCoarsePlaceActions[29].pose.liftDmm == 1300U);
     missionBuildPickBack(pickBackActions);
@@ -187,23 +219,40 @@ int main(void)
         assert(action->waitMs == 0U);
         if (action->type == MECHANISM_ACTION_POSE) {
             assert(mechanismPoseValid(&action->pose));
-            assert(action->pose.horizontalRpm == 80U &&
-                   action->pose.liftRpm == 1000U &&
-                   action->pose.liftAccel == 200U &&
-                   action->pose.turretDps10 == 1800U);
+            assert(action->pose.horizontalRpm == 1000U &&
+                   action->pose.horizontalAccel == 200U &&
+                   action->pose.liftRpm == 2000U &&
+                   action->pose.liftAccel == 240U &&
+                   action->pose.turretDps10 == 2200U);
         }
     }
     for (index = 0U; index < 3U; ++index) {
-        const MechanismPose *pick = &pickBackActions[index * 10U + 3U].pose;
-        static const uint8_t order[3] = {2U, 0U, 1U};
-        uint8_t slot = order[index];
+        uint16_t base = (uint16_t)(1U + index * 11U);
+        static const uint16_t ringAngles[3] = {2657U, 2320U, 3065U};
+        uint8_t slot = index;
         const MechanismPose *place =
             &missionCoarsePlaceActions[slot == 0U ? 8U : slot == 1U ? 17U : 29U].pose;
-        assert(pickBackActions[index * 10U].value == slot + 1U);
-        assert(pickBackActions[index * 10U + 7U].pose.liftDmm == (slot == 1U ? 260U : 300U));
-        assert(pick->horizontalDmm == place->horizontalDmm &&
-               pick->liftDmm == place->liftDmm &&
-               pick->turretDdeg == place->turretDdeg);
+        assert(pickBackActions[base].value == slot + 1U);
+        assert(pickBackActions[base + 8U].pose.liftDmm ==
+               300U);
+        {
+            uint16_t liftIndex = (uint16_t)(base + 5U);
+            const MechanismPose *lift = &pickBackActions[liftIndex].pose;
+            const MechanismPose *turn = &pickBackActions[liftIndex + 1U].pose;
+            const MechanismPose *retract = &pickBackActions[liftIndex + 2U].pose;
+            assert(lift->liftDmm == 0U && lift->turretDdeg == place->turretDdeg);
+            assert(lift->turretDdeg == ringAngles[index]); /* Task rings 2 -> 3 -> 1. */
+            assert(turn->horizontalDmm == lift->horizontalDmm && turn->liftDmm == 0U &&
+                   turn->turretDdeg == 1320U);
+            assert(retract->horizontalDmm == -500 && retract->liftDmm == 0U &&
+                   retract->turretDdeg == 1320U);
+        }
+        {
+            const MechanismPose *pick = &pickBackActions[base + 3U].pose;
+            assert(pick->horizontalDmm == place->horizontalDmm &&
+                   pick->liftDmm == place->liftDmm &&
+                   pick->turretDdeg == place->turretDdeg);
+        }
     }
     for (index = 0U; index < MISSION_COARSE_PLACE_COUNT; ++index) {
         assert(missionCoarsePlaceActions[index].waitMs == 0U);
@@ -211,14 +260,30 @@ int main(void)
             assert(mechanismPoseValid(&missionCoarsePlaceActions[index].pose));
     }
     missionBuildStoragePlace(storageActions, 1U);
-    assert(storageActions[8].pose.liftDmm == 1480U &&
-           storageActions[17].pose.liftDmm == 1400U &&
-           storageActions[29].pose.liftDmm == 1450U);
+    assert(storageActions[8].pose.liftDmm == 1300U &&
+           storageActions[17].pose.liftDmm == 1300U &&
+           storageActions[29].pose.liftDmm == 1300U);
     assert(MISSION_PLACE_COUNT == 33U);
+    assert(rawPickInitial.gripperDps10 == 2700U && missionInitial.gripperDps10 == 2700U &&
+           missionCoarseInitial.gripperDps10 == 2700U);
     assert(rawPickInitial.platformDps10 == 1800U && missionInitial.platformDps10 == 1800U &&
            missionCoarseInitial.platformDps10 == 1800U);
-    assert(missionCoarsePlaceActions[MISSION_COARSE_PLACE_COUNT - 1U].pose.turretDdeg == 3080U);
-    assert(missionCoarsePlaceActions[MISSION_COARSE_PLACE_COUNT - 1U].pose.horizontalDmm == 50);
+    assert(missionCoarsePlaceActions[MISSION_COARSE_PLACE_COUNT - 1U].type ==
+           MECHANISM_ACTION_GRIPPER &&
+           missionCoarsePlaceActions[MISSION_COARSE_PLACE_COUNT - 1U].value == 1U);
+    assert(pickBackActions[0].type == MECHANISM_ACTION_POSE &&
+           pickBackActions[0].pose.horizontalDmm == 55 &&
+           pickBackActions[0].pose.turretDdeg == 3065U &&
+           pickBackActions[0].pose.liftDmm == 0U);
+    assert(pickBackActions[1].type == MECHANISM_ACTION_PLATFORM && pickBackActions[1].value == 1U);
+    assert(pickBackActions[2].type == MECHANISM_ACTION_GRIPPER && pickBackActions[2].value == 1U);
+    assert(MISSION_PICK_BACK_COUNT == 37U);
+    assert(pickBackActions[34].pose.horizontalDmm == 0 &&
+           pickBackActions[34].pose.liftDmm == 0U &&
+           pickBackActions[34].pose.turretDdeg == 1320U);
+    assert(pickBackActions[35].pose.horizontalDmm == 0 &&
+           pickBackActions[35].pose.liftDmm == 0U &&
+            pickBackActions[35].pose.turretDdeg == 650U);
     for (index = 0U; index < MISSION_PLACE_COUNT; ++index) {
         assert(storageActions[index].waitMs == 0U);
         assert(storageActions[index].type != MECHANISM_ACTION_WAIT);
@@ -231,9 +296,51 @@ int main(void)
         }
     }
     missionBuildStoragePlace(storageActions, 2U);
-    assert(storageActions[8].pose.liftDmm == 880U &&
-           storageActions[17].pose.liftDmm == 800U &&
-           storageActions[29].pose.liftDmm == 850U);
+    {
+        static const uint8_t expectedSlots[3] = {3U, 1U, 2U};
+        uint8_t slotIndex = 0U;
+        for (index = 0U; index < MISSION_PLACE_COUNT; ++index) {
+            if (storageActions[index].type == MECHANISM_ACTION_PLATFORM) {
+                assert(slotIndex < 3U);
+                assert(storageActions[index].value == expectedSlots[slotIndex]);
+                ++slotIndex;
+            }
+        }
+        assert(slotIndex == 3U);
+    }
+    assert(storageActions[4].pose.liftDmm == 300U &&
+           storageActions[13].pose.liftDmm == 300U &&
+           storageActions[23].pose.liftDmm == 300U &&
+           storageActions[24].pose.liftDmm == 300U);
+    assert(storageActions[7].pose.horizontalDmm == 55 &&
+           storageActions[7].pose.turretDdeg == 3065U &&
+           storageActions[8].pose.horizontalDmm == 55 &&
+           storageActions[8].pose.turretDdeg == 3065U);
+    assert(storageActions[16].pose.horizontalDmm == -240 &&
+           storageActions[16].pose.turretDdeg == 2657U &&
+           storageActions[17].pose.horizontalDmm == -240 &&
+           storageActions[17].pose.turretDdeg == 2657U);
+    assert(storageActions[11].pose.horizontalDmm == 55 &&
+           storageActions[11].pose.turretDdeg == 3065U &&
+           storageActions[11].pose.liftDmm == 0U);
+    assert(storageActions[19].pose.horizontalDmm == -240 &&
+           storageActions[19].pose.turretDdeg == 2657U &&
+           storageActions[19].pose.liftDmm == 0U);
+    assert(storageActions[21].pose.horizontalDmm == -240 &&
+           storageActions[21].pose.liftDmm == 0U);
+    assert(storageActions[27].pose.horizontalDmm == -500 &&
+           storageActions[27].pose.turretDdeg == 2320U &&
+           storageActions[27].pose.liftDmm == 0U);
+    assert(storageActions[28].pose.horizontalDmm == 435 &&
+           storageActions[28].pose.turretDdeg == 2320U &&
+           storageActions[29].pose.horizontalDmm == 435 &&
+           storageActions[29].pose.turretDdeg == 2320U);
+    assert(storageActions[31].pose.horizontalDmm == 435 &&
+           storageActions[31].pose.turretDdeg == 2320U &&
+           storageActions[31].pose.liftDmm == 0U);
+    assert(storageActions[8].pose.liftDmm == 650U &&
+           storageActions[17].pose.liftDmm == 650U &&
+           storageActions[29].pose.liftDmm == 650U);
     for (index = 0U; index < MISSION_PLACE_COUNT; ++index) {
         if (storageActions[index].type == MECHANISM_ACTION_POSE) {
             assert(mechanismPoseValid(&storageActions[index].pose));

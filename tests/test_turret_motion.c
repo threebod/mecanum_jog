@@ -37,7 +37,8 @@ int main(void)
     checkMove(0U, 90000U, 1200U);
     checkMove(268000U, 132000U, 1200U);
     checkMove(0U, 360000U, 10U);
-    checkMove(360000U, 0U, 1800U);
+    checkMove(360000U, 0U, 2200U);
+    assert(turretMotionDurationMs(90000U, 2200U) == 780U);
     checkMove(50000U, 50001U, 1800U);
     puts("PASS: turret ramp, peak speed, reverse motion and endpoints");
     return 0;

@@ -2,73 +2,51 @@
 #include <stdio.h>
 #include "../route_plan.h"
 
-/* Sample the swept chassis footprint against the map's four forbidden squares
- * and the two projecting work tables. The selected route never rotates. */
-static void clearAt(float x, float y)
-{
-    unsigned i, j;
-    const float low[2] = {550,1400};
-    assert(x >= 150 && x <= 2250 && y >= 150 && y <= 2250);
-    for (i = 0; i < 2; ++i) for (j = 0; j < 2; ++j)
-        assert(x + 150 <= low[i] || x - 150 >= low[i] + 450 ||
-               y + 150 <= low[j] || y - 150 >= low[j] + 450);
-    assert(x - 150 >= 150 || y + 150 <= 910 || y - 150 >= 1490);
-    assert(y - 150 >= 150 || x + 150 <= 910 || x - 150 >= 1490);
-}
-/* Swept circle radius ceil(sqrt(150^2+150^2)) = 213 mm.
- * Includes the full rotation, not only the cardinal endpoint footprint. */
-static void circleClear(float x, float y, float x0, float y0, float x1, float y1)
-{
-    float dx = x < x0 ? x0-x : x > x1 ? x-x1 : 0;
-    float dy = y < y0 ? y0-y : y > y1 ? y-y1 : 0;
-    assert(dx*dx + dy*dy > 213.0f*213.0f);
-}
-static void turnClear(float x, float y)
-{
-    unsigned i,j;
-    const float low[2] = {550,1400};
-    assert(x > 213 && y > 213 && x < 2187 && y < 2187);
-    for (i=0;i<2;++i) for (j=0;j<2;++j)
-        circleClear(x,y,low[i],low[j],low[i]+450,low[j]+450);
-    circleClear(x,y,0,910,150,1490);
-    circleClear(x,y,910,0,1490,150);
-    circleClear(x,y,1050,2315,1350,2400); /* conservative raw disk envelope */
-}
 int main(void)
 {
-    unsigned start, i, sample, events;
-    float x, y;
-    RoutePoint p;
+    unsigned start, i, events;
+    RouteLeg leg;
     RouteHeadingPid headingPid;
     const RouteHeadingPidGains gains = {
         ROUTE_HEADING_KP, ROUTE_HEADING_KI, ROUTE_HEADING_KD
     };
     int16_t forward, right;
     int8_t heading;
-    assert(routePoint(1U, 1U).heading == -1); /* front camera faces QR */
-    assert(routePoint(3U, 1U).heading == 1);
-    assert(routePoint(4U, 1U).heading == -1);
-    assert(routePoint(6U, 1U).heading == 2);
-    assert(routePoint(8U, 1U).heading == 1);
-    assert(routePoint(9U, 1U).heading == -1);
-    assert(routePoint(11U, 1U).heading == 2); /* right arm faces each table */
+    assert(routeDistanceLeg(0U, 1U).rightMm == -200);
+    assert(routeDistanceLeg(3U, 1U).rightMm == -930);
+    assert(routeDistanceLeg(0U, 2U).rightMm == -150);
+    assert(routeDistanceLeg(3U, 2U).rightMm == -930);
+    assert(routeDistanceLeg(0U, 1U).rightMm +
+           routeDistanceLeg(3U, 1U).rightMm == -1130);
+    assert(routeDistanceLeg(2U, 1U).upMm == 830);
+    assert(routeDistanceLeg(2U, 2U).upMm == 825);
+    assert(routeDistanceLeg(9U, 1U).upMm == 880);
+    assert(routeDistanceLeg(9U, 2U).upMm == 890);
     for (start = 1; start <= 2; ++start) {
-        x = 2250; y = start == 1 ? 2250 : 150; events = 0;
-        heading = 0;
+        events = 0; heading = 0;
         for (i = 0; i < ROUTE_COUNT; ++i) {
-            p = routePoint((uint8_t)i, (uint8_t)start);
-            assert(p.x == x || p.y == y); /* no diagonal corner cutting */
-            for (sample = 0; sample <= 100; ++sample)
-                clearAt(x + (p.x-x)*sample/100.0f, y + (p.y-y)*sample/100.0f);
-            if (p.event) ++events;
-            if (p.heading != 4 && p.heading != heading) {
-                turnClear(p.x,p.y); heading = p.heading;
-            }
-            x = p.x; y = p.y;
+            leg = routeDistanceLeg((uint8_t)i, (uint8_t)start);
+            assert((leg.upMm == 0) != (leg.rightMm == 0));
+            assert(routeAbs(leg.upMm) <= 2400 && routeAbs(leg.rightMm) <= 2400);
+            if (leg.event) ++events;
+            if (leg.departureHeading != 4) heading = leg.departureHeading;
+            if (i == 2U) assert(heading == 0 && leg.departureHeading == 0 && leg.heading == 1);
+            if (i == 4U) assert(heading == 1 && leg.rightMm == -860 && leg.heading == 2 && !leg.event);
+            if (i == 5U) assert(heading == 2 && leg.upMm == -1690 && leg.heading == -1 && !leg.event);
+            if (i == 6U) assert(heading == -1 && leg.rightMm == 860 && leg.heading == -1 && leg.event);
+            if (i == 11U) assert(heading == 2 && leg.upMm == -1690);
+            if (i == 8U || i == 13U) assert(heading == 2 && leg.upMm == 850);
+            if (i == 10U) assert(heading == 1 && leg.rightMm == 850);
+            if (i == 14U) assert(heading == 2 && leg.heading == -1 &&
+                                leg.upMm == (start == 1 ? 880 : -850));
+            if (i >= 15U) assert(heading == -1 && leg.heading == 4);
+            if (i == 15U) assert(leg.rightMm == 1700);
+            if (i == 16U) assert(leg.upMm == (start == 1 ? 220 : -200));
+            if (i == 17U) assert(leg.rightMm == 150);
+            if (leg.heading != 4) heading = leg.heading;
         }
-        assert(events == 8); /* QR + 3 stations twice + home */
-        assert(x == 2250 && y == (start == 1 ? 2250 : 150));
-        assert(heading == 0); /* restore nose up BEFORE entering start square */
+        assert(events == 8);
+        assert(heading == -1);
     }
     assert(routeWheel(1,20,0,0,1000) == 20);
     assert(routeWheel(2,20,0,0,1000) == 20);
@@ -103,6 +81,18 @@ int main(void)
     assert(routeHeadingPidStep(&headingPid, &gains, 4, 1, 200, 20, -1) < 0);
     routeHeadingPidReset(&headingPid);
     assert(headingPid.integral == 0 && !headingPid.initialized);
+    /* Small noise stays quiet; deviations below the old 0.6-degree threshold
+     * now produce correction in either direction and accumulate integral. */
+    assert(routeHeadingPidStep(&headingPid, &gains, 0.29f, 0, 100, 20, 1) == 0);
+    assert(routeHeadingPidStep(&headingPid, &gains, -0.29f, 0, 120, 20, 1) == 0);
+    assert(headingPid.integral == 0);
+    assert(routeRound(routeHeadingPidStep(&headingPid, &gains,
+                                         0.4f, 0, 140, 20, 1)) == 1);
+    assert(headingPid.integral > 0);
+    routeHeadingPidReset(&headingPid);
+    assert(routeRound(routeHeadingPidStep(&headingPid, &gains,
+                                         -0.4f, 0, 100, 20, 1)) == -1);
+    assert(headingPid.integral < 0);
     assert(routeSpeed(1000,1000,120) == 120);
     assert(routeSpeed(5,1000,120) < routeSpeed(100,1000,120));
     routeBody(20,0,1,&forward,&right); assert(forward==0 && right==20);
@@ -138,6 +128,6 @@ int main(void)
     assert(routeAbs(routeSlew(0,60,120,20)-2.4f)<0.001f);
     assert(routeAbs(routeSlew(30,-30,90,20)-28.2f)<0.001f);
     assert(routeRound(-1.6f)==-2 && routeRound(1.6f)==2);
-    puts("PASS: both route geometries, station counts, wheel mixing and distance units");
+    puts("PASS: both distance routes, station counts, wheel mixing and distance units");
     return 0;
 }

@@ -13,6 +13,7 @@
 #define VISION_MODE_RING 2U
 #define VISION_FLAG_VALID 0x01U
 #define VISION_FLAG_STABLE 0x02U
+#define VISION_FLAG_RING_NO_DIGIT 0x04U /* Request only; selector is the fallback color. */
 
 typedef struct {
     uint8_t type;
@@ -56,7 +57,8 @@ typedef enum {
     VISION_EVENT_REQUEST,
     VISION_EVENT_MOVE,
     VISION_EVENT_ALIGNED,
-    VISION_EVENT_FAILED
+    VISION_EVENT_FAILED,
+    VISION_EVENT_SAMPLED
 } VisionEvent;
 
 typedef struct {
@@ -68,6 +70,12 @@ typedef struct {
     uint8_t confirmations;
     uint8_t iteration;
     uint8_t waitForTarget;
+    uint8_t materialMask;
+    uint8_t pickupMode; /* 0 normal alignment, 1 any-color pickup alignment, 2 specified-color pickup. */
+    uint8_t observedColor;
+    uint8_t requestFlags;
+    uint8_t sampleOnly;
+    uint16_t sampleId;
     uint32_t token;
     uint32_t requestAt;
     uint32_t settleUntil;
@@ -211,7 +219,7 @@ static uint8_t vision_session_start(VisionSession *session, uint8_t mode,
     (void)now;
     if (!vision_calibration_valid(calibration) ||
         (mode != VISION_MODE_MATERIAL && mode != VISION_MODE_RING) ||
-        (mode == VISION_MODE_MATERIAL && (selector < 1U || selector > 6U)) ||
+        (mode == VISION_MODE_MATERIAL && selector > 6U) ||
         (mode == VISION_MODE_RING && (target < 1U || target > 3U))) return 0U;
     vision_session_init(session);
     session->token = token;
@@ -233,14 +241,34 @@ static void vision_session_make_request(VisionSession *session,
     packet->mode = session->mode;
     packet->selector = session->selector;
     packet->target = session->target;
+    packet->flags = session->requestFlags;
     packet->value[0] = calibration->roi[0];
     packet->value[1] = calibration->roi[1];
     packet->value[2] = calibration->roi[2];
     packet->value[3] = calibration->roi[3];
     packet->value[4] = calibration->anchorU;
     packet->value[5] = calibration->anchorV;
+    if (session->mode == VISION_MODE_MATERIAL)
+        packet->value[6] = session->materialMask;
     session->requestAt = now;
     session->state = VISION_STATE_WAIT;
+}
+
+/* Calibration sampling never uses the existing pixel-to-movement matrix. */
+static uint8_t vision_session_start_sample(VisionSession *session,
+                                           const VisionCalibration *calibration,
+                                           uint16_t sampleId, uint32_t now)
+{
+    VisionCalibration sampling;
+    if (calibration == 0 || calibration->roi[2] <= 0 ||
+        calibration->roi[3] <= 0 || sampleId == 0U) return 0U;
+    sampling = *calibration;
+    sampling.calibrated = 1U;
+    if (!vision_session_start(session, VISION_MODE_RING, 0U, 2U,
+                              &sampling, now)) return 0U;
+    session->sampleOnly = 1U;
+    session->sampleId = sampleId;
+    return 1U;
 }
 
 static VisionEvent vision_session_miss(VisionSession *session,
@@ -255,6 +283,42 @@ static VisionEvent vision_session_miss(VisionSession *session,
     return VISION_EVENT_REQUEST;
 }
 
+static uint8_t vision_material_allowed(const VisionSession *session,
+                                       const VisionPacket *packet)
+{
+    int16_t color = packet->value[5];
+    return color >= 1 && color <= 6 &&
+           (session->selector == 0U || color == session->selector) &&
+           (session->materialMask == 0U ||
+            (session->materialMask & (1U << (color - 1))) != 0U);
+}
+
+static uint8_t vision_quality_valid(const VisionPacket *packet)
+{
+    return packet->mode == VISION_MODE_MATERIAL || packet->value[2] >= 60;
+}
+
+static uint8_t vision_session_fallback_material(VisionSession *session,
+                                               const VisionPacket *packet)
+{
+    if (session->state != VISION_STATE_WAIT || session->mode != VISION_MODE_RING ||
+        !(session->requestFlags & VISION_FLAG_RING_NO_DIGIT) ||
+        session->selector < 1U || session->selector > 6U ||
+        packet->type != VISION_MESSAGE_RESULT || packet->token != session->token ||
+        packet->mode != session->mode || packet->selector != session->selector ||
+        packet->target != session->target ||
+        (((packet->flags & (VISION_FLAG_VALID | VISION_FLAG_STABLE)) ==
+              (VISION_FLAG_VALID | VISION_FLAG_STABLE)) && vision_quality_valid(packet)))
+        return 0U;
+    session->mode = VISION_MODE_MATERIAL;
+    session->requestFlags = 0U;
+    session->materialMask = (uint8_t)(1U << (session->selector - 1U));
+    session->misses = session->confirmations = session->observedColor = 0U;
+    session->forwardMm = session->rightMm = 0.0f;
+    session->state = VISION_STATE_REQUEST;
+    return 1U;
+}
+
 static uint8_t vision_session_wait_for_material(VisionSession *session,
                                                 const VisionPacket *packet)
 {
@@ -263,7 +327,9 @@ static uint8_t vision_session_wait_for_material(VisionSession *session,
         packet->mode != VISION_MODE_MATERIAL || packet->mode != session->mode ||
         packet->selector != session->selector || packet->target != session->target ||
         ((packet->flags & (VISION_FLAG_VALID | VISION_FLAG_STABLE)) ==
-             (VISION_FLAG_VALID | VISION_FLAG_STABLE) && packet->value[2] >= 60))
+             (VISION_FLAG_VALID | VISION_FLAG_STABLE) &&
+         vision_quality_valid(packet) &&
+         vision_material_allowed(session, packet)))
         return 0U;
     session->state = VISION_STATE_REQUEST;
     session->misses = session->confirmations = 0U;
@@ -279,13 +345,29 @@ static VisionEvent vision_session_observe(VisionSession *session,
     float right;
     float absForward;
     float absRight;
+    uint8_t aligned;
+    int16_t du, dv;
     (void)now;
     if (session->state != VISION_STATE_WAIT ||
         packet->type != VISION_MESSAGE_RESULT || packet->token != session->token ||
         packet->mode != session->mode || packet->selector != session->selector ||
         packet->target != session->target) return VISION_EVENT_NONE;
+    if (session->sampleOnly) {
+        if ((packet->flags & (VISION_FLAG_VALID | VISION_FLAG_STABLE)) !=
+                (VISION_FLAG_VALID | VISION_FLAG_STABLE) ||
+            !vision_quality_valid(packet)) {
+            session->state = VISION_STATE_FAILED;
+            session->fault = "SAMPLE_UNCONFIRMED";
+            return VISION_EVENT_FAILED;
+        }
+        session->state = VISION_STATE_IDLE;
+        return VISION_EVENT_SAMPLED;
+    }
     if ((packet->flags & (VISION_FLAG_VALID | VISION_FLAG_STABLE)) !=
-            (VISION_FLAG_VALID | VISION_FLAG_STABLE) || packet->value[2] < 60) {
+            (VISION_FLAG_VALID | VISION_FLAG_STABLE) ||
+        !vision_quality_valid(packet) ||
+        (session->mode == VISION_MODE_MATERIAL &&
+         !vision_material_allowed(session, packet))) {
         session->confirmations = 0U;
         if (session->waitForTarget) {
             session->misses = 0U;
@@ -295,16 +377,27 @@ static VisionEvent vision_session_observe(VisionSession *session,
         return vision_session_miss(session, "UNCONFIRMED");
     }
     session->misses = 0U;
-    vision_map_error(calibration,
-                     (int16_t)(packet->value[0] - calibration->anchorU),
-                     (int16_t)(packet->value[1] - calibration->anchorV),
-                     &forward, &right);
+    if (session->mode == VISION_MODE_MATERIAL && session->materialMask != 0U) {
+        if (session->observedColor != (uint8_t)packet->value[5])
+            session->confirmations = 0U;
+        session->observedColor = (uint8_t)packet->value[5];
+    }
+    du = (int16_t)(packet->value[0] - calibration->anchorU);
+    dv = (int16_t)(packet->value[1] - calibration->anchorV);
+    vision_map_error(calibration, du, dv, &forward, &right);
     session->forwardMm = forward;
     session->rightMm = right;
     absForward = forward < 0.0f ? -forward : forward;
     absRight = right < 0.0f ? -right : right;
-    if (absForward <= 5.0f && absRight <= 5.0f) {
-        if (++session->confirmations >= 2U) {
+    aligned = (uint8_t)(absForward <= 3.0f && absRight <= 3.0f);
+    if (session->mode == VISION_MODE_RING || session->target != 0U) {
+        aligned = (uint8_t)(du >= -2 && du <= 2 && dv >= -2 && dv <= 2);
+    }
+    if (session->mode == VISION_MODE_MATERIAL && session->pickupMode != 0U) {
+        aligned = (uint8_t)(du >= -14 && du <= 14 && dv >= -14 && dv <= 14);
+    }
+    if (aligned) {
+        if (++session->confirmations >= (session->pickupMode != 0U ? 1U : 2U)) {
             session->state = VISION_STATE_ALIGNED;
             return VISION_EVENT_ALIGNED;
         }
@@ -317,15 +410,7 @@ static VisionEvent vision_session_observe(VisionSession *session,
         session->fault = "NOT_CONVERGED";
         return VISION_EVENT_FAILED;
     }
-    vision_limit_step(&session->forwardMm, &session->rightMm, 20.0f);
-    absForward = session->forwardMm < 0.0f ? -session->forwardMm : session->forwardMm;
-    absRight = session->rightMm < 0.0f ? -session->rightMm : session->rightMm;
     session->cumulativeMm += absForward + absRight;
-    if (session->cumulativeMm > 100.0f) {
-        session->state = VISION_STATE_FAILED;
-        session->fault = "CUMULATIVE_LIMIT";
-        return VISION_EVENT_FAILED;
-    }
     session->state = VISION_STATE_MOVE;
     return VISION_EVENT_MOVE;
 }

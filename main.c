@@ -10,9 +10,12 @@
 #include "mechanism_action.h"
 #include "raw_pick_action.h"
 #include "mission_actions.h"
+#include "task_code.h"
 #include "vision_control.h"
 #include "vision_config.h"
 #include "qr_scan.h"
+#include "obstacle_stop.h"
+#include "avoidance_run.h"
 #include "tjc_display.h"
 #include "hwt101.h"
 #include "jog_can.h"
@@ -30,12 +33,16 @@
 #define AUX_MOVE_STATUS_POLL_MS  50U
 #define AUX_MOVE_TIMEOUT_MARGIN_MS  3000U
 #define HOST_HEARTBEAT_TIMEOUT_MS  1000U
+#define MISSION_BUTTON_DEBOUNCE_MS 30U
+#define MISSION_BUTTON_LONG_PRESS_MS 1000U
 
 #define SERVO_MIN_PULSE_US    500U
 #define SERVO_PULSE_RANGE_US  2000U
 #define SERVO_PERIOD_US       20000U
-#define SERVO_DEFAULT_SPEED_DPS10 1200U
+#define SERVO_DEFAULT_SPEED_DPS10 1800U
 #define SERVO_MAX_SPEED_DPS10     1800U
+#define SERVO_GRIPPER_MAX_SPEED_DPS10 2700U
+#define SERVO_EMPTY_TURRET_SPEED_DPS10 2500U
 #define SERVO_UPDATE_HZ       50U
 #define SERVO_STEP_MDEG       ((SERVO_DEFAULT_SPEED_DPS10 * 100U) / SERVO_UPDATE_HZ)
 
@@ -82,6 +89,9 @@ static volatile uint32_t targetAngleMdeg[3];
 static volatile uint32_t turretStartAngleMdeg;
 static volatile uint32_t turretElapsedMs;
 static volatile uint32_t turretDurationMs;
+static volatile uint8_t turretLinearMotion;
+/* A close command may hold material; opening releases it. No load sensor. */
+static uint8_t gripperMayHoldMaterial = 1U;
 static volatile uint32_t servoStepMdeg[3] = {
     SERVO_STEP_MDEG, SERVO_STEP_MDEG, SERVO_STEP_MDEG
 };
@@ -103,28 +113,42 @@ static void serviceMotion(void);
 /* Route progress is nominal, NOT measured ground position. */
 static uint8_t routeActive, routeWaiting, routeIndex, routeStartZone, routeStep;
 static float routeX, routeY, routeYaw;
+static float routeLegProgress;
+static int16_t routeFirstLeftCorrection;
 static int16_t routeForward, routeRight;
 static uint32_t routeTick, routeLegStart, routeSettle;
 static uint8_t routeAuto, routeRotating, routeOnlyTurn, routeTurnInBand;
+/* 0 pending, 1 aligning station heading, 2 aligned for this leg. */
+static uint8_t routeStationAlignment;
 static uint8_t fullRouteRunning;
 static uint8_t rawPickRouteActive, rawPickAtStation, rawPickItemIndex;
 static uint8_t rawPickMissingReported;
+static uint8_t rawPickCurrentColor, rawPickCurrentSlot, rawPickCollectedMask;
 static MechanismAction rawPickRouteActions[RAW_PICK_ACTION_COUNT];
-static const uint8_t rawPickColors[2][3] = {{4U, 2U, 6U}, {5U, 1U, 3U}};
+static const uint8_t rawPickColors[2][3] = {{4U, 2U, 6U}, {4U, 2U, 6U}};
+static MissionTask missionTask;
+static uint8_t missionTaskValid;
+static char missionQrCode[16];
+static uint8_t missionQrValid;
+static uint8_t missionOffline;
+static uint8_t missionButtonReady, missionButtonRawHigh, missionButtonStableHigh;
+static uint8_t missionButtonLongSent;
+static uint16_t missionButtonRpm;
+static uint32_t missionButtonChangedAt, missionButtonPressedAt;
 typedef enum {
     MISSION_IDLE, MISSION_QR_WAIT, MISSION_RAW_PICK,
     MISSION_RING_ALIGN, MISSION_TEMP_ALIGN, MISSION_COARSE_PLACE, MISSION_COARSE_PICK,
-    MISSION_TEMP_PLACE, MISSION_RECENTER
+    MISSION_TEMP_PLACE, MISSION_RECENTER, MISSION_RAW_EXIT
 } MissionPhase;
 static uint8_t missionActive, missionActionStarted;
 static MissionPhase missionPhase;
+static uint16_t missionGrabCount, missionPlaceCount;
 static uint32_t missionDeadline;
-static uint8_t missionObservedItem;
 static float missionOffsetForward, missionOffsetRight;
 static MechanismAction missionWorkActions[MISSION_PLACE_COUNT];
 static MechanismAction missionPickBackActions[MISSION_PICK_BACK_COUNT];
 static const MechanismPose missionRingObservePose =
-    {-500, 0, 2700, 30, 50, 90, 50, 1200};
+    {-770, 0, 2720, 1000, 200, 2000, 240, 2200};
 static int8_t routeHeading, routeNextHeading;
 static float routeBaseYaw;
 static uint32_t routeTurnStart, routeTurnStable;
@@ -149,6 +173,9 @@ static uint8_t routeSentValid;
 static uint8_t straightLateral;
 static uint8_t straightUseRoutePid;
 static float straightSpeedState, straightTurnState;
+static char relativeMoveDirection;
+static uint16_t relativeMoveDistance;
+static float relativeMoveProgress;
 static void sendRouteSpeeds(int16_t forward, int16_t right, int16_t turn);
 static void printHeadingPidTrace(float targetYaw, float actualYaw, int16_t turn);
 static void serialSendString(const char *text);
@@ -163,8 +190,17 @@ static VisionParser visionParser;
 static volatile VisionPacket visionRxPacket;
 static volatile uint8_t visionRxReady;
 static QrScanParser qrParser;
+static ObstacleStopParser obstacleParser;
+static volatile uint8_t obstacleStopPending;
+static AvRun avoidance;
+static AvParser avoidanceParser;
+static volatile AvObservation avoidanceRxPacket;
+static volatile uint8_t avoidanceRxReady;
+static uint8_t processAvoidanceCommand(const char *command);
+static void serviceAvoidance(void);
 static volatile uint8_t qrRxReady;
 static volatile char qrRxPayload[QR_SCAN_PAYLOAD_MAX + 1U];
+static uint8_t qrAtStation, qrResultAtStation;
 static uint8_t visionMotionAutomatic;
 static uint8_t visionPickActive;
 static const VisionCalibration visionPickCalibration = {
@@ -260,6 +296,22 @@ static void invalidateNavigation(const char *reason)
     serialSendString("NAV INVALID reason=");
     serialSendString(reason);
     serialSendString("\r\n");
+}
+
+static void missionButtonInit(void)
+{
+    GPIO_InitTypeDef gpio;
+    RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
+    GPIO_StructInit(&gpio);
+    gpio.GPIO_Pin = GPIO_Pin_9;
+    gpio.GPIO_Mode = GPIO_Mode_IN;
+    gpio.GPIO_PuPd = GPIO_PuPd_UP;
+    GPIO_Init(GPIOC, &gpio);
+    missionButtonRawHigh = missionButtonStableHigh =
+        GPIO_ReadInputDataBit(GPIOC, GPIO_Pin_9) != 0U;
+    /* A button held during boot must be released before it can start a task. */
+    missionButtonLongSent = !missionButtonRawHigh;
+    missionButtonChangedAt = missionButtonPressedAt = clockMs;
 }
 
 static void serialInit(void)
@@ -415,16 +467,36 @@ static void tjcDisplayInit(void)
     USART_Cmd(USART6, ENABLE);
 }
 
-static void tjcDisplayQr(const char *result)
+static void tjcDisplaySend(const uint8_t *command, uint8_t length)
 {
-    uint8_t command[TJC_DISPLAY_COMMAND_MAX];
-    uint8_t length = tjc_display_qr_command(result, command);
     uint8_t index;
     for (index = 0U; index < length; ++index) {
         while (USART_GetFlagStatus(USART6, USART_FLAG_TXE) == RESET) {
         }
         USART_SendData(USART6, command[index]);
     }
+}
+
+static void tjcDisplayQr(const char *result)
+{
+    uint8_t command[TJC_DISPLAY_COMMAND_MAX];
+    uint8_t length = tjc_display_qr_command(result, command);
+    tjcDisplaySend(command, length);
+}
+
+static void tjcDisplayCounts(void)
+{
+    uint8_t command[TJC_DISPLAY_COMMAND_MAX];
+    uint8_t length = tjc_display_count_command(1U, missionGrabCount, command);
+    tjcDisplaySend(command, length);
+    length = tjc_display_count_command(2U, missionPlaceCount, command);
+    tjcDisplaySend(command, length);
+}
+
+static void tjcDisplayResetCounts(void)
+{
+    missionGrabCount = missionPlaceCount = 0U;
+    tjcDisplayCounts();
 }
 
 void USART3_IRQHandler(void)
@@ -434,6 +506,20 @@ void USART3_IRQHandler(void)
     uint8_t index;
     if (USART_GetITStatus(USART3, USART_IT_RXNE) == RESET) return;
     byte = (uint8_t)USART_ReceiveData(USART3);
+    {
+        AvObservation packet;
+        if (av_parser_feed(&avoidanceParser, byte, &packet) && avoidance.active &&
+            packet.token == avoidance.token && packet.region == avoidance.region) {
+            if (!avoidanceRxReady || !avoidanceRxPacket.seen) {
+                avoidanceRxPacket = packet;
+                avoidanceRxReady = 1U;
+            }
+        }
+    }
+    if (obstacle_stop_feed(&obstacleParser, byte)) {
+        obstacleStopPending = 1U;
+        emergencyStop = 1U;
+    }
     if (qr_scan_feed(&qrParser, byte, result) && !qrRxReady) {
         for (index = 0U; result[index] != '\0'; ++index)
             qrRxPayload[index] = result[index];
@@ -459,6 +545,18 @@ static void serviceQrScan(void)
     serialSendString(result);
     serialSendString("\r\n");
     tjcDisplayQr(result);
+    if (!missionQrValid && (!missionActive ||
+        (!missionTaskValid && routeIndex <= 2U))) {
+        MissionTask scanned;
+        if (missionTaskParse(result, &scanned)) {
+            memcpy(missionQrCode, result, sizeof(missionQrCode));
+            missionQrValid = 1U;
+            serialSendString("QR TASK cached\r\n");
+        } else {
+            serialSendString("QR INVALID expected=CCC+PPP+CCC+PPP\r\n");
+        }
+    }
+    if (qrAtStation && (!missionActive || missionQrValid)) qrResultAtStation = 1U;
 }
 
 void UART4_IRQHandler(void)
@@ -511,13 +609,18 @@ static void stopAllMotors(void)
     straightUseRoutePid = 0U;
     routeActive = 0U;
     fullRouteRunning = 0U;
+    missionButtonReady = 0U;
+    missionOffline = 0U;
+    missionQrValid = 0U;
     missionActive = missionActionStarted = 0U;
     missionPhase = MISSION_IDLE;
     missionOffsetForward = missionOffsetRight = 0.0f;
     rawPickRouteActive = rawPickAtStation = rawPickItemIndex = 0U;
     rawPickMissingReported = 0U;
+    rawPickCurrentColor = rawPickCurrentSlot = rawPickCollectedMask = 0U;
     routeWaiting = 0U;
     routeRotating = routeOnlyTurn = routeTurnInBand = 0U;
+    routeStationAlignment = 0U;
     routeDriveRpm = routeTurnRpm = routeCorrection = 0.0f;
     routeHeadingPidReset(&routeHeadingPid);
     routeSentValid = 0U;
@@ -559,7 +662,7 @@ static void printHelp(void)
     serialSendString("  motor N D jog motor 5|6 in direction 0|1 (armed)\r\n");
     serialSendString("  auxmove N D R A move motor 5|6 by signed 0.1mm (armed)\r\n");
     serialSendString("  cancheck N query motor 1..6 CAN status\r\n");
-    serialSendString("  servo N A [S] set angle; speed S=10..1800 x0.1dps\r\n");
+    serialSendString("  servo N A [S] set angle; speed S=10..1800 (gripper 2700, turret 2200; empty 2500) x0.1dps\r\n");
     serialSendString("  W/S/A/D   forward/back/left/right\r\n");
     serialSendString("  X, stop   stop motors/servo motion and disarm\r\n");
     serialSendString("  !         emergency stop motors/servo motion\r\n");
@@ -576,19 +679,25 @@ static void printHelp(void)
     serialSendString("  vision scale material F R  apply checked mm/pixel x1000 (armed)\r\n");
     serialSendString("  vision pick material 1..6  stationary color-gated pickup (armed)\r\n");
     serialSendString("  vision scale ring N F R  mm/pixel x1000, RAM only (armed)\r\n");
+    serialSendString("  vision sample ring 2 ID  read stable pixels without movement\r\n");
     serialSendString("  vision pause/status | vision jog F R RPM (armed)\r\n");
     serialSendString("  yawdir 0       correction sign: 0 normal, 1 reversed\r\n");
     serialSendString("  status         yaw, age, wheel mapping and trims\r\n");
-    serialSendString("  route start 1|2 [rpm]  run map route (arm, nose UP)\r\n");
+    serialSendString("  route start 1|2 [rpm]  run distance legs (arm, nose UP)\r\n");
     serialSendString("  route step 1|2 [rpm]   pause at EVERY waypoint (arm)\r\n");
     serialSendString("  route next       continue from a stopped checkpoint\r\n");
-    serialSendString("  route status     estimated position / checkpoint\r\n");
+    serialSendString("  route status     estimated leg distance / checkpoint\r\n");
     serialSendString("  route tune F L T [V]  scales, turn and lateral RPM limit, RAM only\r\n");
     serialSendString("  route auto 1|2 [rpm]   full route; rpm 10..250 (arm)\r\n");
+    serialSendString("  avoid start 1|2 10..250  two-round region-memory test (arm)\r\n");
+    serialSendString("  avoid stop|status|clear  stop/query/clear remembered roads\r\n");
     serialSendString("  route rawpick 1|2 [rpm]  stop at RAW_1, pick green/yellow/light blue (arm)\r\n");
-    serialSendString("  route mission 1|2 [rpm]  two-round pickup/place mission (arm)\r\n");
+    serialSendString("  task CCC+PPP+CCC+PPP  colors 1..6, rings 123 permutation\r\n");
+    serialSendString("  route mission 1|2 [rpm]  two-round pickup/place mission (task, arm)\r\n");
+    serialSendString("  route button rpm  prepare PC9 start: short=zone1, hold 1s=zone2 (arm)\r\n");
     serialSendString("  turn L|R 1..180  relative IMU turn in clear space (arm)\r\n");
     serialSendString("  nav init 1|2       set estimated start pose; fresh IMU, idle\r\n");
+    serialSendString("  move W|S|A|D 1..2400mm 10..250rpm  relative heading hold (arm)\r\n");
     serialSendString("  nav goto X Y [rpm] safe-corridor target; rpm 10..250 (arm)\r\n");
     serialSendString("  nav status         estimated navigation state\r\n");
     serialSendString("  pid get            read navigation heading PID (x100)\r\n");
@@ -636,6 +745,7 @@ static CommandResult parseServoCommand(const char *line, ServoCommand *command)
     if (!parseUint(&cursor, &channel) || !parseUint(&cursor, &angle)) {
         return COMMAND_FORMAT_ERROR;
     }
+    if (channel == 4U) speedDps10 = MECHANISM_TURRET_SPEED_MAX;
     while (*cursor == ' ') cursor++;
     if (*cursor != '\0') {
         if (!parseUint(&cursor, &speedDps10)) return COMMAND_FORMAT_ERROR;
@@ -649,7 +759,10 @@ static CommandResult parseServoCommand(const char *line, ServoCommand *command)
         (channel == 4U && angle > 360U)) {
         return COMMAND_ANGLE_ERROR;
     }
-    if (speedDps10 < 10U || speedDps10 > SERVO_MAX_SPEED_DPS10) {
+    if (speedDps10 < 10U ||
+        speedDps10 > (channel == 2U ? SERVO_GRIPPER_MAX_SPEED_DPS10 :
+                       channel == 4U ? MECHANISM_TURRET_SPEED_MAX :
+                                       SERVO_MAX_SPEED_DPS10)) {
         return COMMAND_SPEED_ERROR;
     }
 
@@ -764,6 +877,13 @@ static uint8_t servoSetTargetMdeg(uint8_t channel, uint32_t target,
 {
     uint8_t index = (uint8_t)(channel - 2U);
     uint32_t step = (uint32_t)speedDps10 * 100U / SERVO_UPDATE_HZ;
+    if (channel == 2U) {
+        gripperMayHoldMaterial = target < (uint32_t)rawPickInitial.gripperOpenDeg * 1000U;
+    }
+    if (channel == 4U && !gripperMayHoldMaterial) {
+        speedDps10 = SERVO_EMPTY_TURRET_SPEED_DPS10;
+        step = (uint32_t)speedDps10 * 100U / SERVO_UPDATE_HZ;
+    }
     if (step == 0U) step = 1U;
 
     if (!servoChannelEnabled[index]) {
@@ -783,7 +903,10 @@ static uint8_t servoSetTargetMdeg(uint8_t channel, uint32_t target,
         uint32_t delta = target > current ? target - current : current - target;
         turretStartAngleMdeg = current;
         turretElapsedMs = 0U;
-        turretDurationMs = turretMotionDurationMs(delta, speedDps10);
+        turretLinearMotion = !gripperMayHoldMaterial;
+        turretDurationMs = turretLinearMotion ?
+            ((delta + step - 1U) / step) * 20U :
+            turretMotionDurationMs(delta, speedDps10);
     }
     targetAngleMdeg[index] = target;
     servoStepMdeg[index] = step;
@@ -816,6 +939,10 @@ static void stopServoMotion(void)
 static void serviceHostWatchdog(void)
 {
     uint8_t hadNavigation, hadFullRoute, hadVision;
+    if ((missionOffline && fullRouteRunning) ||
+        (missionButtonReady && !motionMode && !routeActive &&
+         !mechanismState.running && !mechanismActionActive && !visionSessionActive() &&
+         !servoChannelMoving[0] && !servoChannelMoving[1] && !servoChannelMoving[2])) return;
     if (!hostHeartbeatActive ||
         clockMs - hostHeartbeatStamp <= HOST_HEARTBEAT_TIMEOUT_MS) {
         return;
@@ -823,7 +950,7 @@ static void serviceHostWatchdog(void)
 
     hostHeartbeatActive = 0U;
     hadNavigation = navInitialized;
-    hadFullRoute = fullRouteRunning;
+    hadFullRoute = fullRouteRunning || missionButtonReady;
     hadVision = visionSessionActive();
     stopServoMotion();
     stopAllMotors();
@@ -853,7 +980,7 @@ static void processServoCommand(const char *commandText)
         return;
     }
     if (result == COMMAND_SPEED_ERROR) {
-        serialSendString("ERR speed: 10..1800 x0.1dps\r\n");
+        serialSendString("ERR speed: 10..1800 (gripper 2700, turret 2200) x0.1dps\r\n");
         return;
     }
 
@@ -915,8 +1042,8 @@ void TIM2_IRQHandler(void)
         }
         current = currentAngleMdeg[index];
         target = targetAngleMdeg[index];
-        if (index == 2U) {
-            turretElapsedMs += 20U;
+        if (index == 2U) turretElapsedMs += 20U;
+        if (index == 2U && !turretLinearMotion) {
             current = turretMotionAngleMdeg(turretStartAngleMdeg, target,
                                             turretElapsedMs, turretDurationMs);
         } else if (current < target) {
@@ -981,9 +1108,9 @@ static uint8_t visionSessionActive(void)
 
 static const VisionCalibration *visionCalibration(void)
 {
-    if (visionPickActive) return rawPickAtStation && rawPickItemIndex == 0U ?
+    if (visionPickActive) return rawPickAtStation ?
         &visionMaterialCalibration : &visionPickCalibration;
-    if (missionActive && missionPhase == MISSION_TEMP_ALIGN && routeIndex == 12U) {
+    if (missionActive && missionPhase == MISSION_TEMP_ALIGN && routeIndex == 14U) {
         return &visionRingCalibration[1];
     }
     if (visionSession.mode == VISION_MODE_MATERIAL) {
@@ -995,9 +1122,20 @@ static const VisionCalibration *visionCalibration(void)
     return (const VisionCalibration *)0;
 }
 
-static uint8_t rawPickColor(uint8_t item)
+static uint8_t rawPickPendingMask(void)
 {
-    return rawPickColors[missionActive && routeIndex >= 9U ? 1U : 0U][item];
+    const uint8_t *colors = missionActive ? missionTask.colors[routeIndex == 11U] :
+                                          rawPickColors[routeIndex == 11U];
+    if (rawPickItemIndex >= 3U) return 0U;
+    return (uint8_t)(1U << (colors[rawPickItemIndex] - 1U));
+}
+
+static void printRawPickState(const char *state, uint8_t color, uint8_t slot)
+{
+    serialSendString("ROUTE RAWPICK state="); serialSendString(state);
+    serialSendString(" color="); serialSendUint(color);
+    serialSendString(" slot="); serialSendUint(slot);
+    serialSendString("\r\n");
 }
 
 static const char *visionStateName(VisionState state)
@@ -1055,9 +1193,8 @@ static void failVision(const char *reason)
 {
     uint8_t wasRawPick = rawPickAtStation;
     uint8_t wasMission = missionActive;
-    uint8_t slot = rawPickItemIndex < 3U ?
-        (uint8_t)(rawPickItemIndex + 1U) : 3U;
-    uint8_t color = wasRawPick ? rawPickColor((uint8_t)(slot - 1U)) : 0U;
+    uint8_t slot = wasRawPick ? rawPickCurrentSlot : 0U;
+    uint8_t color = wasRawPick ? rawPickCurrentColor : 0U;
     if (visionPickActive || wasMission) {
         stopServoMotion();
         stopAllMotors();
@@ -1141,6 +1278,46 @@ static void serviceMotion(void)
     uint16_t speed;
     if (!motionMode || emergencyStop) return;
     elapsed = clockMs - motionStart;
+    if (motionMode == 5U) {
+        if (motionInterrupted() || !imuValid || clockMs - imuStamp > 250U ||
+            clockMs - lastControl > 150U || elapsed >= motionDuration ||
+            routeAbs(headingError(targetYaw, imuYaw)) > 20.0f) {
+            stopAllMotors();
+            serialSendString("ERR MOVE: IMU/CAN/control delay/timeout; stopped\r\n");
+            return;
+        }
+        if (clockMs - lastControl < 20U) return;
+        dt = clockMs - lastControl;
+        lastControl = clockMs;
+        relativeMoveProgress += routeAbs(routeEstimateScaled(
+            straightLateral ? routeRight : routeForward, dt,
+            straightLateral ? routeLateralScale : routeForwardScale));
+        if (relativeMoveProgress >= relativeMoveDistance - 0.5f) {
+            stopDriveMotors();
+            motionMode = 0U;
+            routeForward = routeRight = 0;
+            routeDriveRpm = routeCorrection = 0.0f;
+            routeSentValid = 0U;
+            serialSendString("MOVE DONE dir=");
+            serialSendChar(relativeMoveDirection);
+            serialSendString(" distance_mm=");
+            serialSendUint(relativeMoveDistance);
+            serialSendString("\r\n");
+            return;
+        }
+        speed = (uint16_t)routeSpeed(relativeMoveDistance - relativeMoveProgress,
+                                    elapsed, straightRpm);
+        /* Round up the braking tail so the distance estimate can finish. */
+        if (speed == 0U && elapsed >= 700U) speed = 1U;
+        routeDriveRpm = routeSlew(routeDriveRpm, speed, ROUTE_ACCEL_RPM_S, dt);
+        correction = routeRound(routeHeadingPidStep(&routeHeadingPid,
+            &routeHeadingGains, headingError(targetYaw, imuYaw), imuYaw,
+            imuStamp, dt, yawSign));
+        routeForward = straightLateral ? 0 : straightDirection * routeRound(routeDriveRpm);
+        routeRight = straightLateral ? straightDirection * routeRound(routeDriveRpm) : 0;
+        sendRouteSpeeds(routeForward, routeRight, correction);
+        return;
+    }
     if (motionMode == 4U) {
         if (motionInterrupted()) {
             failVision("MOTION_FAULT");
@@ -1294,18 +1471,31 @@ static void startMechanismPose(const MechanismPose *target)
         serialSendString("ERR MECH: invalid or busy pose\r\n");
         return;
     }
+    if (!gripperMayHoldMaterial) {
+        MechanismPose axisTarget = *target;
+        uint32_t delta = mechanismAbsoluteDelta((int16_t)(target->turretDdeg -
+            mechanismState.start.turretDdeg)) * 100U;
+        uint32_t step = SERVO_EMPTY_TURRET_SPEED_DPS10 * 100U / SERVO_UPDATE_HZ;
+        uint32_t turretMs = ((delta + step - 1U) / step) * 20U;
+        axisTarget.turretDdeg = mechanismState.start.turretDdeg;
+        mechanismState.durationMs = mechanismMoveDurationMs(&mechanismState.start, &axisTarget);
+        if (turretMs > mechanismState.durationMs) mechanismState.durationMs = turretMs;
+        mechanismState.deadlineMs = clockMs + mechanismState.durationMs;
+    }
     setAuxMotorsEnabled(true);
     if (motionInterrupted()) { stopServoMotion(); stopAllMotors(); return; }
     if (horizontalPulses != 0U) {
         Emm_V5_Pos_Control(6U, horizontalDelta > 0 ? 0U : 1U,
                            target->horizontalRpm, target->horizontalAccel,
                            horizontalPulses, false, true);
+        delay_ms(2U); /* Allow the drive to cache the command before synchronous start. */
     }
     if (motionInterrupted()) { stopServoMotion(); stopAllMotors(); return; }
     if (liftPulses != 0U) {
         Emm_V5_Pos_Control(5U, liftDelta > 0 ? 0U : 1U,
                            target->liftRpm, target->liftAccel,
                            liftPulses, false, true);
+        delay_ms(2U);
     }
     servoSetTargetMdeg(4U, (uint32_t)target->turretDdeg * 100U,
                        target->turretDps10);
@@ -1330,6 +1520,15 @@ static uint8_t processMechanismCommand(const char *commandText)
             printMechanismPose(mechanismState.running ? "MECH RUN" : "MECH POS",
                                mechanismState.running ? &mechanismState.target :
                                                         &mechanismState.current);
+            serialSendString("MECH SERVOS gripper_mdeg=");
+            serialSendUint32(currentAngleMdeg[0]);
+            serialSendString(" platform_mdeg=");
+            serialSendUint32(currentAngleMdeg[1]);
+            serialSendString(" turret_mdeg=");
+            serialSendUint32(currentAngleMdeg[2]);
+            serialSendString(" moving=");
+            serialSendUint((uint16_t)(servoChannelMoving[0] || servoChannelMoving[1] || servoChannelMoving[2]));
+            serialSendString("\r\n");
         }
         return 1U;
     }
@@ -1404,8 +1603,29 @@ uint8_t mechanismActionStart(const MechanismInitialState *initial,
     return 1U;
 }
 
+/* Counts describe completed commands, not sensor-confirmed material handling. */
+static void missionCountAction(const MechanismAction *action)
+{
+    if (!missionActive || !mechanismState.valid ||
+        action->type != MECHANISM_ACTION_GRIPPER) return;
+    if (!action->value &&
+        (missionPhase == MISSION_RAW_PICK || missionPhase == MISSION_COARSE_PICK)) {
+        ++missionGrabCount;
+    } else if (action->value &&
+               (missionPhase == MISSION_COARSE_PLACE || missionPhase == MISSION_TEMP_PLACE) &&
+               mechanismState.current.liftDmm != 0U &&
+               mechanismState.current.turretDdeg != 1320U) {
+        /* Exclude opening at the observation pose and transfers on the tray. */
+        ++missionPlaceCount;
+    } else {
+        return;
+    }
+    tjcDisplayCounts();
+}
+
 static void mechanismActionCompleteStep(uint16_t waitMs)
 {
+    missionCountAction(&mechanismActions[mechanismActionIndex]);
     if (waitMs != 0U) {
         mechanismActionWaitUntil = clockMs + waitMs;
         return;
@@ -1434,7 +1654,9 @@ void mechanismActionService(void)
     if (!mechanismActionDispatched) {
         /* Only tray descent depends on platform arrival. Other poses overlap. */
         if (action->type == MECHANISM_ACTION_POSE &&
-            action->pose.horizontalDmm == -500 && action->pose.turretDdeg == 1320U &&
+            (action->pose.horizontalDmm == -500 || action->pose.horizontalDmm == -450 ||
+             action->pose.horizontalDmm == -470) &&
+            action->pose.turretDdeg == 1320U &&
             action->pose.liftDmm > mechanismState.current.liftDmm &&
             servoChannelMoving[1]) return;
         if ((action->type == MECHANISM_ACTION_PLATFORM ||
@@ -1660,8 +1882,9 @@ static uint8_t processAuxMoveCommand(const char *command)
     maximumDmm = motorId == 5U ? 1500 : 1870;
     if (distanceDmm == 0 || distanceDmm < -maximumDmm ||
         distanceDmm > maximumDmm || rpm < MECHANISM_RPM_MIN ||
-        rpm > MECHANISM_RPM_MAX || accel < MECHANISM_ACCEL_MIN ||
-        accel > MECHANISM_ACCEL_MAX) {
+        rpm > (motorId == 5U ? MECHANISM_LIFT_RPM_MAX : MECHANISM_RPM_MAX) ||
+        accel < MECHANISM_ACCEL_MIN ||
+        accel > (motorId == 5U ? MECHANISM_LIFT_ACCEL_MAX : MECHANISM_ACCEL_MAX)) {
         serialSendString("ERR: auxmove distance/rpm/accel out of range\r\n");
         return 1U;
     }
@@ -1732,8 +1955,7 @@ static void printRouteStatus(void)
 {
     serialSendString(routeActive ? (routeWaiting ? "ROUTE WAIT " : "ROUTE RUN ") : "ROUTE IDLE ");
     serialSendString("point="); serialSendUint((uint16_t)(routeIndex + 1U));
-    serialSendString(" estimated_x_mm="); serialSendUint((uint16_t)(routeX < 0 ? 0 : routeX));
-    serialSendString(" estimated_y_mm="); serialSendUint((uint16_t)(routeY < 0 ? 0 : routeY));
+    serialSendString(" progress_mm="); serialSendUint((uint16_t)routeLegProgress);
     serialSendString(" forward_scale_bp=");
     serialSendUint((uint16_t)(routeForwardScale * 10000.0f + 0.5f));
     serialSendString(" lateral_scale_bp=");
@@ -1822,41 +2044,38 @@ static void printNavPose(const char *state)
 
 static RoutePoint activeRoutePoint(void)
 {
-    if (navRunning) {
-        NavPoint point = navPath[routeIndex];
-        RoutePoint result;
-        result.x = point.x;
-        result.y = point.y;
-        result.event = 0;
-        result.heading = routeIndex + 1U == navPathCount ?
-                         point.arrivalHeading : NAV_HEADING_KEEP;
-        return result;
-    }
-    return routePoint(routeIndex, routeStartZone);
+    NavPoint point = navPath[routeIndex];
+    RoutePoint result;
+    result.x = point.x;
+    result.y = point.y;
+    result.event = 0;
+    result.heading = routeIndex + 1U == navPathCount ?
+                     point.arrivalHeading : NAV_HEADING_KEEP;
+    return result;
 }
 
-static const char *routeStageName(const RoutePoint *point)
+static RouteLeg activeDistanceLeg(void)
 {
-    return point->event != (const char *)0 ? point->event : "TRANSIT";
+    RouteLeg leg = routeDistanceLeg(routeIndex, routeStartZone);
+    if (routeIndex == 4U) leg.rightMm += routeFirstLeftCorrection;
+    return leg;
 }
 
 static void printFullRoutePose(const char *state)
 {
-    RoutePoint target = activeRoutePoint();
-    serialSendString("ROUTE POS x=");
-    serialSendUint((uint16_t)(routeX + 0.5f));
-    serialSendString(" y=");
-    serialSendUint((uint16_t)(routeY + 0.5f));
-    serialSendString(" yaw_cdeg=");
-    serialSendInt(navFieldYawCdeg());
-    serialSendString(" state=");
-    serialSendString(state);
-    serialSendString(" stage=");
-    serialSendString(routeStageName(&target));
-    serialSendString(" target_x=");
-    serialSendUint((uint16_t)target.x);
-    serialSendString(" target_y=");
-    serialSendUint((uint16_t)target.y);
+    RouteLeg leg = activeDistanceLeg();
+    uint16_t distance = (uint16_t)routeAbs(leg.upMm ? leg.upMm : leg.rightMm);
+    const char *direction = leg.upMm > 0 ? "UP" : leg.upMm < 0 ? "DOWN" :
+                            leg.rightMm > 0 ? "RIGHT" : "LEFT";
+    serialSendString("ROUTE DIST index=");
+    serialSendUint((uint16_t)(routeIndex + 1U));
+    serialSendString(" direction="); serialSendString(direction);
+    serialSendString(" distance_mm="); serialSendUint(distance);
+    serialSendString(" progress_mm=");
+    serialSendUint((uint16_t)(routeLegProgress + 0.5f));
+    serialSendString(" yaw_cdeg="); serialSendInt(navFieldYawCdeg());
+    serialSendString(" state="); serialSendString(state);
+    serialSendString(" stage="); serialSendString(leg.event ? leg.event : "TRANSIT");
     serialSendString("\r\n");
 }
 
@@ -1865,22 +2084,14 @@ static void printFullRouteStage(const RoutePoint *point)
     serialSendString("ROUTE STAGE index=");
     serialSendUint((uint16_t)(routeIndex + 1U));
     serialSendString(" name=");
-    serialSendString(routeStageName(point));
+    serialSendString(point->event ? point->event : "TRANSIT");
     serialSendString("\r\n");
 }
 
 static void finishFullRoute(void)
 {
-    int16_t x = (int16_t)(routeX + 0.5f);
-    int16_t y = (int16_t)(routeY + 0.5f);
     stopAllMotors();
-    serialSendString("ROUTE DONE x=");
-    serialSendUint((uint16_t)x);
-    serialSendString(" y=");
-    serialSendUint((uint16_t)y);
-    serialSendString(" yaw_cdeg=");
-    serialSendInt(navFieldYawCdeg());
-    serialSendString("\r\n");
+    serialSendString("ROUTE DONE mode=DISTANCE\r\n");
     serialSendString("ROUTE END: verify actual home position\r\n");
 }
 
@@ -1911,11 +2122,12 @@ static void serviceRoute(void)
 {
     uint32_t now, dt, age, sampleMs;
     RoutePoint p;
-    float yaw, error, dx, dy, remaining;
+    RouteLeg leg;
+    float yaw, error, dx, dy, remaining, turnEntry, turnExit;
     int16_t speed, turn, bodyForward, bodyRight;
     float pidTurn;
     uint16_t cruiseRpm;
-    uint8_t lateral;
+    uint8_t lateral, bodyLateral;
     if (!routeActive || motionInterrupted()) return;
     now = clockMs;
     if (routeWaiting) { routeTick = now; return; }
@@ -1958,9 +2170,11 @@ static void serviceRoute(void)
                 "ERR TURN: timeout; aborted\r\n");
             return;
         }
-        /* Separate enter/exit thresholds prevent stop/start chatter at 2deg. */
-        if (!routeTurnInBand && routeAbs(error) <= 2.0f) routeTurnInBand = 1U;
-        if (routeTurnInBand && routeAbs(error) > 3.5f) routeTurnInBand = 0U;
+        /* Station work requires 1deg; ordinary turns retain their hysteresis. */
+        turnEntry = routeStationAlignment == 1U ? 1.0f : 2.0f;
+        turnExit = routeStationAlignment == 1U ? 1.0f : 3.5f;
+        if (!routeTurnInBand && routeAbs(error) <= turnEntry) routeTurnInBand = 1U;
+        if (routeTurnInBand && routeAbs(error) > turnExit) routeTurnInBand = 0U;
         pidTurn = routeTurnPidStep(&routeTurnPid, error, sampleMs,
                                    routeTurnRpmLimit, yawSign);
         routeTurnRpm = routeTurnRamp(routeTurnRpm,
@@ -1968,41 +2182,79 @@ static void serviceRoute(void)
         sendRouteSpeeds(0, 0, routeRound(routeTurnRpm));
         if (routeTurnInBand && routeRound(routeTurnRpm) == 0) {
             if (routeTurnInBand == 1U) { routeTurnStable = now; routeTurnInBand = 2U; }
-            if (now - routeTurnStable >= 200U) {
+            if (now - routeTurnStable >= 200U &&
+                (routeStationAlignment != 1U ||
+                 (int32_t)(sampleMs - routeTurnStable) >= 200)) {
                 routeRotating = routeTurnInBand = 0U;
                 routeHeading = routeNextHeading;
                 routeLegStart = now;
                 routeHeadingPidReset(&routeHeadingPid);
+                if (routeStationAlignment == 1U) {
+                    routeStationAlignment = 2U;
+                    serialSendString("ROUTE station heading aligned (1deg / 200ms)\r\n");
+                }
                 if (routeOnlyTurn) {
-                    stopAllMotors(); serialSendString("TURN DONE (2deg entry / 3.5deg hysteresis)\r\n");
+                    stopDriveMotors();
+                    routeActive = routeOnlyTurn = 0U;
+                    routeSentValid = 0U;
+                    serialSendString("TURN DONE (2deg entry / 3.5deg hysteresis)\r\n");
                 }
             }
         }
         return;
     }
-    /* Integration only estimates travel. IMU constrains yaw, not XY drift. */
-    routeX += routeEstimateScaled(routeRight, dt,
-        (routeHeading == 0 || routeHeading == 2) ?
-        routeLateralScale : routeForwardScale);
-    routeY += routeEstimateScaled(routeForward, dt,
-        (routeHeading == 1 || routeHeading == -1) ?
-        routeLateralScale : routeForwardScale);
-    if (navRunning && now - navLastReport >= 200U) {
-        navLastReport = now;
-        printNavPose("RUN");
-    }
-    if (fullRouteRunning && now - routeLastReport >= 200U) {
-        routeLastReport = now;
-        printFullRoutePose("RUN");
+    /* Task arrival depends only on this leg's commanded travel estimate. */
+    if (navRunning) {
+        routeX += routeEstimateScaled(routeRight, dt,
+            (routeHeading == 0 || routeHeading == 2) ?
+            routeLateralScale : routeForwardScale);
+        routeY += routeEstimateScaled(routeForward, dt,
+            (routeHeading == 1 || routeHeading == -1) ?
+            routeLateralScale : routeForwardScale);
+        if (now - navLastReport >= 200U) {
+            navLastReport = now;
+            printNavPose("RUN");
+        }
+        p = activeRoutePoint();
+        dx = p.x - routeX; dy = p.y - routeY;
+    } else {
+        leg = activeDistanceLeg();
+        routeLegProgress += routeAbs(routeEstimateScaled(
+            leg.upMm ? routeForward : routeRight, dt,
+            ((leg.upMm && (routeHeading == 1 || routeHeading == -1)) ||
+             (leg.rightMm && (routeHeading == 0 || routeHeading == 2))) ?
+            routeLateralScale : routeForwardScale));
+        remaining = routeAbs(leg.upMm ? leg.upMm : leg.rightMm) - routeLegProgress;
+        if (remaining < 0.0f) remaining = 0.0f;
+        p.x = p.y = 0; p.event = leg.event; p.heading = leg.heading;
+        dx = leg.rightMm ? (leg.rightMm > 0 ? remaining : -remaining) : 0.0f;
+        dy = leg.upMm ? (leg.upMm > 0 ? remaining : -remaining) : 0.0f;
+        if (fullRouteRunning && now - routeLastReport >= 200U) {
+            routeLastReport = now;
+            printFullRoutePose("RUN");
+        }
+        if (leg.departureHeading != 4 && routeHeading != leg.departureHeading &&
+            remaining > 1.5f) {
+            sendRouteSpeeds(0, 0, 0);
+            if (motionInterrupted()) return;
+            routeForward = routeRight = 0;
+            routeDriveRpm = routeTurnRpm = routeCorrection = 0.0f;
+            routeHeadingPidReset(&routeHeadingPid);
+            routeNextHeading = leg.departureHeading;
+            routeYaw = routeBaseYaw + leg.departureHeading * 90.0f * yawSign;
+            routeRotating = 1U; routeTurnInBand = 0U;
+            routeTurnPidReset(&routeTurnPid);
+            routeTurnStart = routeLegStart = clockMs;
+            serialSendString("ROUTE turning before distance leg\r\n");
+            return;
+        }
     }
     if (!routeAuto && now - routeSettle < 300U) return;
-    p = activeRoutePoint();
-    dx = p.x - routeX; dy = p.y - routeY;
     /* At the endpoint don't reverse just because one sampled step crossed it. */
-    if ((routeRight > 0 && dx < 0) || (routeRight < 0 && dx > 0)) {
+    if (navRunning && ((routeRight > 0 && dx < 0) || (routeRight < 0 && dx > 0))) {
         routeX = p.x; dx = 0;
     }
-    if ((routeForward > 0 && dy < 0) || (routeForward < 0 && dy > 0)) {
+    if (navRunning && ((routeForward > 0 && dy < 0) || (routeForward < 0 && dy > 0))) {
         routeY = p.y; dy = 0;
     }
     if (routeAbs(dx) <= 1.5f && routeAbs(dy) <= 1.5f) {
@@ -2011,10 +2263,12 @@ static void serviceRoute(void)
         routeForward = routeRight = 0;
         routeDriveRpm = routeTurnRpm = routeCorrection = 0.0f;
         routeHeadingPidReset(&routeHeadingPid);
-        routeX = p.x; routeY = p.y; /* snap NOMINAL coordinates only */
-        if (p.heading != 4 && p.heading != routeHeading) {
-            routeNextHeading = p.heading;
-            routeYaw = routeBaseYaw + p.heading * 90.0f * yawSign;
+        if (navRunning) { routeX = p.x; routeY = p.y; }
+        if ((p.heading != 4 && p.heading != routeHeading) ||
+            (p.event && routeStationAlignment == 0U)) {
+            routeStationAlignment = p.event ? 1U : 0U;
+            routeNextHeading = p.heading == 4 ? routeHeading : p.heading;
+            routeYaw = routeBaseYaw + routeNextHeading * 90.0f * yawSign;
             routeRotating = 1U; routeTurnInBand = 0U;
             routeTurnPidReset(&routeTurnPid);
             routeTurnStart = routeLegStart = clockMs;
@@ -2029,10 +2283,11 @@ static void serviceRoute(void)
                 return;
             }
             ++routeIndex;
+            routeStationAlignment = 0U;
             routeSettle = routeLegStart = clockMs;
             return;
         }
-        serialSendString("ROUTE estimated waypoint: ");
+        serialSendString("ROUTE distance leg complete: ");
         serialSendUint((uint16_t)(routeIndex + 1U));
         if (p.event) { serialSendChar(' '); serialSendString(p.event); }
         serialSendString("\r\n");
@@ -2046,6 +2301,8 @@ static void serviceRoute(void)
             return;
         }
         ++routeIndex;
+        routeStationAlignment = 0U;
+        routeLegProgress = 0.0f;
         routeWaiting = (uint8_t)((!routeAuto && (routeStep || p.event != 0)) ||
                                  (rawPickRouteActive && routeIndex == 4U) ||
                                  (missionActive && p.event != 0));
@@ -2055,7 +2312,8 @@ static void serviceRoute(void)
             rawPickAtStation = 1U;
             rawPickItemIndex = 0U;
             rawPickMissingReported = 0U;
-            serialSendString("ROUTE RAWPICK state=WAIT_MATERIAL color=4 slot=1\r\n");
+            rawPickCurrentColor = rawPickCurrentSlot = rawPickCollectedMask = 0U;
+            printRawPickState("WAIT_MATERIAL", rawPickColors[0][0], 1U);
         }
         if (routeWaiting && !missionActive)
             serialSendString("WAIT: verify position / finish station work; send route next\r\n");
@@ -2064,7 +2322,8 @@ static void serviceRoute(void)
     /* Map-axis translation is transformed to the current body heading. */
     lateral = routeAbs(dx) > 1.5f;
     remaining = lateral ? routeAbs(dx) : routeAbs(dy);
-    cruiseRpm = lateral && routeRpm > routeLateralRpmLimit ?
+    bodyLateral = (routeHeading == 1 || routeHeading == -1) ? !lateral : lateral;
+    cruiseRpm = bodyLateral && routeRpm > routeLateralRpmLimit ?
         routeLateralRpmLimit : routeRpm;
     speed = routeSpeed(remaining, now - routeLegStart, cruiseRpm);
     routeDriveRpm = routeSlew(routeDriveRpm, speed, ROUTE_ACCEL_RPM_S, dt);
@@ -2173,6 +2432,7 @@ static uint8_t processNavCommand(const char *command)
     routeActive = routeAuto = 1U;
     routeWaiting = routeStep = 0U;
     routeRotating = routeOnlyTurn = routeTurnInBand = 0U;
+    routeStationAlignment = 0U;
     routeIndex = 0U;
     routeForward = routeRight = 0;
     routeDriveRpm = routeTurnRpm = routeCorrection = 0.0f;
@@ -2193,9 +2453,56 @@ static uint8_t processNavCommand(const char *command)
 
 static uint8_t processRouteCommand(const char *command)
 {
-    uint8_t start, step, autoRun, rawRun = 0U, missionRun = 0U;
+    uint8_t start, step, autoRun, rawRun = 0U, missionRun = 0U, buttonRun = 0U;
     uint16_t degrees, rpm, forwardBp, lateralBp, lateralRpm, kp100, ki100, kd100;
     const char *cursor;
+    if (strncmp(command, "move ", 5U) == 0) {
+        uint16_t distance, speed;
+        char direction = command[5];
+        if (strlen(command) < 9U ||
+            (direction != 'W' && direction != 'S' && direction != 'A' && direction != 'D') ||
+            command[6] != ' ' || !parsePair(command + 7, &distance, &speed) ||
+            distance < 1U || distance > 2400U || speed < 10U || speed > 250U) {
+            serialSendString("ERR MOVE: move W|S|A|D 1..2400mm 10..250rpm\r\n");
+            return 1U;
+        }
+        if (motionMode || routeActive || mechanismState.running || mechanismActionActive ||
+            visionSessionActive() || servoChannelMoving[0] || servoChannelMoving[1] ||
+            servoChannelMoving[2] || !armed || !imuValid || clockMs - imuStamp > 250U ||
+            motionInterrupted()) {
+            serialSendString("ERR MOVE: requires armed idle, fresh IMU and healthy CAN\r\n");
+            return 1U;
+        }
+        armed = 0U;
+        straightLateral = (uint8_t)(direction == 'A' || direction == 'D');
+        straightDirection = direction == 'W' || direction == 'D' ? 1 : -1;
+        straightRpm = straightLateral && speed > routeLateralRpmLimit ? routeLateralRpmLimit : speed;
+        relativeMoveDirection = direction;
+        relativeMoveDistance = distance;
+        relativeMoveProgress = 0.0f;
+        targetYaw = imuYaw;
+        routeForward = routeRight = 0;
+        routeDriveRpm = 0.0f;
+        routeSentValid = 0U;
+        routeHeadingPidReset(&routeHeadingPid);
+        invalidateNavigation("relative_motion");
+        setAllMotorsEnabled(true);
+        if (motionInterrupted()) {
+            stopAllMotors();
+            serialSendString("ERR MOVE: CAN failure; stopped\r\n");
+            return 1U;
+        }
+        motionStart = lastControl = clockMs;
+        motionDuration = (uint32_t)(distance * 120000.0f /
+            (ROUTE_MM_PER_REV * straightRpm *
+             (straightLateral ? routeLateralScale : routeForwardScale))) + 10000U;
+        motionMode = 5U;
+        serialSendString("MOVE RUN dir="); serialSendChar(direction);
+        serialSendString(" distance_mm="); serialSendUint(distance);
+        serialSendString(" rpm="); serialSendUint(straightRpm);
+        serialSendString("\r\n");
+        return 1U;
+    }
     if (strcmp(command, "pid get") == 0) {
         printHeadingPidStatus();
         return 1U;
@@ -2279,11 +2586,14 @@ static uint8_t processRouteCommand(const char *command)
             degrees < 1U || degrees > 180U) {
             serialSendString("ERR: turn L|R 1..180\r\n"); return 1U;
         }
-        if (motionMode || routeActive || !armed || !imuValid || clockMs - imuStamp > 250U || motionInterrupted()) {
+        if (motionMode || routeActive || mechanismState.running || mechanismActionActive ||
+            visionSessionActive() || servoChannelMoving[0] || servoChannelMoving[1] ||
+            servoChannelMoving[2] || !armed || !imuValid || clockMs - imuStamp > 250U || motionInterrupted()) {
             serialSendString("ERR: turn requires idle, arm, fresh IMU and healthy CAN\r\n"); return 1U;
         }
     armed = 0U;
         routeYaw = imuYaw + (command[5] == 'L' ? degrees : -(float)degrees) * yawSign;
+        invalidateNavigation("manual_turn");
         setAllMotorsEnabled(true);
         if (motionInterrupted()) { stopAllMotors(); return 1U; }
         routeForward = routeRight = 0;
@@ -2292,6 +2602,7 @@ static uint8_t processRouteCommand(const char *command)
         routeSentValid = 0U;
         routeTick = routeTurnStart = routeLegStart = clockMs;
         routeWaiting = routeTurnInBand = 0U;
+        routeStationAlignment = 0U;
         routeOnlyTurn = routeRotating = routeActive = 1U;
         routeTurnPidReset(&routeTurnPid);
         serialSendString("TURN running\r\n"); return 1U;
@@ -2332,8 +2643,16 @@ static uint8_t processRouteCommand(const char *command)
     } else if (strncmp(command, "route mission ", 14U) == 0) {
         cursor = command + 14U;
         step = 0U; autoRun = missionRun = 1U;
+    } else if (strncmp(command, "route button ", 13U) == 0) {
+        cursor = command + 13U;
+        if (!parseUint(&cursor, &rpm) || *cursor != '\0') {
+            serialSendString("ERR ROUTE: route button 10..250rpm\r\n");
+            return 1U;
+        }
+        degrees = 1U;
+        step = 0U; autoRun = missionRun = buttonRun = 1U;
     } else return 0U;
-    if (!parseValueWithOptionalRpm(cursor, &degrees, &rpm) ||
+    if ((!buttonRun && !parseValueWithOptionalRpm(cursor, &degrees, &rpm)) ||
         degrees < 1U || degrees > 2U || rpm < 10U || rpm > 250U) {
         serialSendString("ERR: route start|step|auto|rawpick|mission 1|2 [10..250rpm]\r\n");
         return 1U;
@@ -2355,8 +2674,9 @@ static uint8_t processRouteCommand(const char *command)
     }
     if ((rawRun || missionRun) && (mechanismState.current.horizontalDmm != 0 ||
                    mechanismState.current.liftDmm != 0U ||
-                   mechanismState.current.turretDdeg != 2700U)) {
-        serialSendString("ERR ROUTE: rawpick needs pose h=0 l=0 t=2700; check mech status\r\n");
+                   (mechanismState.current.turretDdeg != 650U &&
+                    mechanismState.current.turretDdeg != 2720U))) {
+        serialSendString("ERR ROUTE: rawpick needs pose h=0 l=0 t=650 or 2720; check mech status\r\n");
         return 1U;
     }
     if ((rawRun || missionRun) && (servoChannelMoving[0] || servoChannelMoving[1] ||
@@ -2373,9 +2693,10 @@ static uint8_t processRouteCommand(const char *command)
         return 1U;
     }
     if (missionRun && (!servoChannelEnabled[0] || !servoChannelEnabled[1] ||
-                       currentAngleMdeg[0] != 70000U ||
+                       (currentAngleMdeg[0] != 90000U &&
+                        currentAngleMdeg[0] != 35000U) ||
                        currentAngleMdeg[1] != 26000U)) {
-        serialSendString("ERR ROUTE: mission needs commanded gripper=70 and platform=26\r\n");
+        serialSendString("ERR ROUTE: mission needs commanded gripper=35 or 90 and platform=26\r\n");
         return 1U;
     }
     armed = 0U;
@@ -2385,23 +2706,38 @@ static uint8_t processRouteCommand(const char *command)
             "ERR: fresh IMU and healthy CAN required\r\n");
         return 1U;
     }
+    if (buttonRun) {
+        missionButtonRpm = rpm;
+        missionButtonReady = 1U;
+        serialSendString("BUTTON READY rpm="); serialSendUint(rpm);
+        serialSendString("\r\nROUTE MISSION phase=WAIT_BUTTON station=START\r\n");
+        return 1U;
+    }
+    missionButtonReady = 0U;
     invalidateNavigation("manual_motion");
     start = (uint8_t)degrees;
     routeRpm = rpm;
     routeAuto = autoRun; fullRouteRunning = autoRun;
     missionActive = missionRun;
+    if (missionRun) {
+        missionTaskValid = 0U;
+        tjcDisplayResetCounts();
+    }
     missionPhase = MISSION_IDLE;
     missionActionStarted = 0U;
     missionOffsetForward = missionOffsetRight = 0.0f;
     rawPickRouteActive = rawRun;
     rawPickAtStation = rawPickItemIndex = rawPickMissingReported = 0U;
+    rawPickCurrentColor = rawPickCurrentSlot = rawPickCollectedMask = 0U;
     routeHeading = routeNextHeading = 0;
     routeDriveRpm = routeTurnRpm = routeCorrection = 0.0f;
     routeHeadingPidReset(&routeHeadingPid);
     routeSentValid = 0U;
     routeRotating = routeOnlyTurn = routeTurnInBand = 0U;
+    routeStationAlignment = 0U;
     routeStartZone = start; routeStep = step; routeIndex = 0U;
-    routeX = 2250.0f; routeY = start == 1U ? 2250.0f : 150.0f;
+    routeFirstLeftCorrection = 0;
+    routeLegProgress = 0.0f;
     routeBaseYaw = routeYaw = imuYaw;
     routeForward = routeRight = 0;
     setAllMotorsEnabled(true);
@@ -2422,7 +2758,6 @@ static uint8_t processRouteCommand(const char *command)
 
 static void serviceRawPickRoute(void)
 {
-    uint8_t color;
     if (!rawPickAtStation || !routeWaiting) return;
     if (!imuValid || clockMs - imuStamp > 250U || motionInterrupted()) {
         visionPickActive = 1U;
@@ -2436,26 +2771,26 @@ static void serviceRawPickRoute(void)
     if (!mechanismState.valid || mechanismState.running ||
         mechanismState.current.horizontalDmm != 0 ||
         mechanismState.current.liftDmm != 0U ||
-        mechanismState.current.turretDdeg != 2700U) {
+        (mechanismState.current.turretDdeg != 2720U &&
+         !(rawPickItemIndex == 0U &&
+           mechanismState.current.turretDdeg == 650U))) {
         visionPickActive = 1U;
         failVision("PICK_REQUIRES_INITIAL_POSE");
         return;
     }
-    color = rawPickColor(rawPickItemIndex);
+    rawPickCurrentColor = missionActive ? missionTask.colors[routeIndex == 11U][rawPickItemIndex] :
+                                         rawPickColors[routeIndex == 11U][rawPickItemIndex];
+    rawPickCurrentSlot = (uint8_t)(rawPickItemIndex + 1U);
     if (!vision_session_start(&visionSession, VISION_MODE_MATERIAL,
-                              color, 0U, rawPickItemIndex == 0U ?
-                              &visionMaterialCalibration : &visionPickCalibration, clockMs)) {
+                              rawPickItemIndex == 0U ? 0U : rawPickCurrentColor,
+                              0U, &visionMaterialCalibration, clockMs)) {
         visionPickActive = 1U;
         failVision("PICK_START_REJECTED");
         return;
     }
     visionPickActive = 1U;
     visionSession.state = VISION_STATE_PREP;
-    serialSendString("ROUTE RAWPICK state=PREP color=");
-    serialSendUint(color);
-    serialSendString(" slot=");
-    serialSendUint((uint16_t)(rawPickItemIndex + 1U));
-    serialSendString("\r\n");
+    printRawPickState("PREP", rawPickCurrentColor, rawPickCurrentSlot);
     startMechanismPose(&rawPickObservePose);
     if (!mechanismState.running) failVision("PICK_PREP_FAILED");
 }
@@ -2480,21 +2815,30 @@ static void serviceVision(void)
         if (!mechanismState.valid) {
             failVision("PICK_PREP_FAILED");
         } else if (!mechanismState.running) {
-            if (mechanismState.current.horizontalDmm != -500 ||
+            if (mechanismState.current.horizontalDmm != rawPickObservePose.horizontalDmm ||
                 mechanismState.current.liftDmm != 0U ||
-                mechanismState.current.turretDdeg != 2700U ||
+                mechanismState.current.turretDdeg != 2720U ||
                 !vision_session_start(&visionSession, VISION_MODE_MATERIAL,
                                       color, 0U, visionCalibration(),
                                       clockMs)) {
                 failVision("PICK_PREP_FAILED");
             } else {
+                /* Lower while the camera detects; pickup waits for completion. */
+                startMechanismPose(&rawPickLowerPose);
+                if (!mechanismState.running) {
+                    failVision("PICK_PREP_FAILED");
+                    return;
+                }
+                if (rawPickAtStation) {
+                    visionSession.materialMask = rawPickItemIndex == 0U ? 0x2FU :
+                                                                           rawPickPendingMask();
+                    visionSession.pickupMode = rawPickItemIndex == 0U ? 1U : 2U;
+                    visionSession.waitForTarget = 1U;
+                }
                 printVisionState();
                 if (rawPickAtStation) {
-                    serialSendString("ROUTE RAWPICK state=DETECT color=");
-                    serialSendUint(color);
-                    serialSendString(" slot=");
-                    serialSendUint((uint16_t)(rawPickItemIndex + 1U));
-                    serialSendString("\r\n");
+                    printRawPickState("DETECT", color,
+                                      color == 0U ? 0U : rawPickCurrentSlot);
                 }
             }
         }
@@ -2504,32 +2848,38 @@ static void serviceVision(void)
         if (!mechanismState.valid) {
             failVision("PICK_ACTION_FAILED");
         } else if (!mechanismActionActive) {
+            if (rawPickAtStation && rawPickItemIndex == 2U) {
+                if (mechanismState.running) return;
+                if (mechanismState.current.turretDdeg != 650U) {
+                    startMechanismPose(&rawPickTravelPose);
+                    if (!mechanismState.running) failVision("PICK_RETURN_FAILED");
+                    return;
+                }
+            }
             visionPickActive = 0U;
             visionSession.state = VISION_STATE_PICK_DONE;
             printVisionState();
             serialSendString("VISION PICK DONE color=");
-            serialSendUint(visionSession.selector);
+            serialSendUint(rawPickAtStation ? rawPickCurrentColor : visionSession.selector);
             serialSendString("\r\n");
             if (rawPickAtStation) {
                 serialSendString("ROUTE RAWPICK state=ITEM_DONE color=");
-                serialSendUint(rawPickColor(rawPickItemIndex));
+                serialSendUint(rawPickCurrentColor);
                 serialSendString(" slot=");
-                serialSendUint((uint16_t)(rawPickItemIndex + 1U));
+                serialSendUint(rawPickCurrentSlot);
                 serialSendString("\r\n");
                 ++rawPickItemIndex;
+                rawPickCollectedMask |= (uint8_t)(1U << (rawPickCurrentColor - 1U));
                 rawPickMissingReported = 0U;
                 if (rawPickItemIndex == 3U) {
-                    serialSendString("ROUTE RAWPICK state=DONE color=");
-                    serialSendUint(rawPickColor(2U));
-                    serialSendString(" slot=3\r\n");
+                    printRawPickState("DONE", rawPickCurrentColor, rawPickCurrentSlot);
                     if (!missionActive)
                         serialSendString("WAIT: verify three materials; send route next\r\n");
                 } else {
-                    serialSendString("ROUTE RAWPICK state=WAIT_MATERIAL color=");
-                    serialSendUint(rawPickColor(rawPickItemIndex));
-                    serialSendString(" slot=");
-                    serialSendUint((uint16_t)(rawPickItemIndex + 1U));
-                    serialSendString("\r\n");
+                    printRawPickState("WAIT_MATERIAL",
+                        missionActive ? missionTask.colors[routeIndex == 11U][rawPickItemIndex] :
+                                        rawPickColors[routeIndex == 11U][rawPickItemIndex],
+                        (uint8_t)(rawPickItemIndex + 1U));
                 }
             }
         }
@@ -2554,19 +2904,34 @@ static void serviceVision(void)
     if (rawPickAtStation &&
         vision_session_wait_for_material(&visionSession, &packet)) {
         if (!rawPickMissingReported) {
-            serialSendString("ROUTE RAWPICK state=WAIT_MATERIAL color=");
-            serialSendUint(rawPickColor(rawPickItemIndex));
-            serialSendString(" slot=");
-            serialSendUint((uint16_t)(rawPickItemIndex + 1U));
-            serialSendString("\r\n");
+            printRawPickState("WAIT_MATERIAL", visionSession.selector,
+                              visionSession.selector == 0U ? 0U : rawPickCurrentSlot);
             rawPickMissingReported = 1U;
         }
+        return;
+    }
+    if (missionActive && missionPhase == MISSION_TEMP_ALIGN && routeIndex == 14U &&
+        vision_session_fallback_material(&visionSession, &packet)) {
+        serialSendString("VISION FALLBACK material color=");
+        serialSendUint(visionSession.selector);
+        serialSendString("\r\n");
+        printVisionState();
         return;
     }
     event = vision_session_observe(&visionSession, calibration, &packet, clockMs);
     if (event == VISION_EVENT_NONE) return;
     du = (int16_t)(packet.value[0] - calibration->anchorU);
     dv = (int16_t)(packet.value[1] - calibration->anchorV);
+    if (event == VISION_EVENT_SAMPLED) {
+        serialSendString("VISION MEASURE id="); serialSendUint(visionSession.sampleId);
+        serialSendString(" ring=2 token="); serialSendUint32(packet.token);
+        serialSendString(" du="); serialSendInt(du);
+        serialSendString(" dv="); serialSendInt(dv);
+        serialSendString(" quality="); serialSendUint((uint16_t)packet.value[2]);
+        serialSendString("\r\n");
+        printVisionState();
+        return;
+    }
     serialSendString("VISION SAMPLE token=");
     serialSendUint32(packet.token);
     serialSendString(" du="); serialSendInt(du);
@@ -2585,11 +2950,39 @@ static void serviceVision(void)
         }
         printVisionState();
     } else if (event == VISION_EVENT_ALIGNED) {
+        if (visionPickActive && rawPickAtStation && visionSession.selector == 0U) {
+            /* Alignment may use any color; pickup still follows the task. */
+            if (!vision_session_start(&visionSession, VISION_MODE_MATERIAL,
+                                      rawPickCurrentColor, 0U,
+                                      &visionMaterialCalibration, clockMs)) {
+                failVision("PICK_START_REJECTED");
+                return;
+            }
+            visionSession.materialMask = rawPickPendingMask();
+            visionSession.pickupMode = 2U;
+            visionSession.waitForTarget = 1U;
+            rawPickMissingReported = 0U;
+            printVisionState();
+            printRawPickState("DETECT", rawPickCurrentColor, rawPickCurrentSlot);
+            return;
+        }
         if (visionPickActive) {
             const MechanismAction *actions = rawPickActions;
+            if (mechanismState.running) {
+                visionSession.state = VISION_STATE_REQUEST;
+                visionSession.confirmations = 0U;
+                return;
+            }
+            if (!mechanismState.valid ||
+                mechanismState.current.horizontalDmm != rawPickLowerPose.horizontalDmm ||
+                mechanismState.current.liftDmm != rawPickLowerPose.liftDmm ||
+                mechanismState.current.turretDdeg != rawPickLowerPose.turretDdeg) {
+                failVision("PICK_PREP_FAILED");
+                return;
+            }
             if (rawPickAtStation) {
                 rawPickActionsForSlot(rawPickRouteActions,
-                                      (uint8_t)(rawPickItemIndex + 1U));
+                                      rawPickCurrentSlot);
                 actions = rawPickRouteActions;
             }
             if (!mechanismActionStart(&rawPickInitial, actions,
@@ -2600,9 +2993,9 @@ static void serviceVision(void)
                 printVisionState();
                 if (rawPickAtStation) {
                     serialSendString("ROUTE RAWPICK state=PICK color=");
-                    serialSendUint(rawPickColor(rawPickItemIndex));
+                    serialSendUint(rawPickCurrentColor);
                     serialSendString(" slot=");
-                    serialSendUint((uint16_t)(rawPickItemIndex + 1U));
+                    serialSendUint(rawPickCurrentSlot);
                     serialSendString("\r\n");
                 }
             }
@@ -2628,11 +3021,11 @@ static void missionReport(const char *phase)
     serialSendString(" station=");
     if (routeIndex == 2U) serialSendString("QR");
     else if (routeIndex == 4U) serialSendString("RAW_1");
-    else if (routeIndex == 5U) serialSendString("COARSE_1");
-    else if (routeIndex == 7U) serialSendString("TEMP_1");
-    else if (routeIndex == 9U) serialSendString("RAW_2");
-    else if (routeIndex == 10U) serialSendString("COARSE_2");
-    else if (routeIndex == 12U) serialSendString("TEMP_2");
+    else if (routeIndex == 7U) serialSendString("COARSE_1");
+    else if (routeIndex == 9U) serialSendString("TEMP_1");
+    else if (routeIndex == 11U) serialSendString("RAW_2");
+    else if (routeIndex == 12U) serialSendString("COARSE_2");
+    else if (routeIndex == 14U) serialSendString("TEMP_2");
     else serialSendString("TRANSIT");
     serialSendString("\r\n");
 }
@@ -2666,22 +3059,29 @@ static void missionBeginStation(uint8_t nextIndex)
     missionOffsetForward = missionOffsetRight = 0.0f;
     vision_session_init(&visionSession);
     if (nextIndex == 2U) {
+        /* Preserve early results from the legacy single-shot QR entry as well. */
+        missionTaskValid = 0U;
         missionPhase = MISSION_QR_WAIT;
         missionDeadline = clockMs + 1000U;
         missionReport("QR_WAIT");
-    } else if (nextIndex == 4U || nextIndex == 9U) {
+    } else if (nextIndex == 4U || nextIndex == 11U) {
         missionPhase = MISSION_RAW_PICK;
         rawPickAtStation = 1U;
-        rawPickItemIndex = rawPickMissingReported = missionObservedItem = 0U;
-        missionDeadline = clockMs + 30000U;
+        rawPickItemIndex = rawPickMissingReported = 0U;
+        rawPickCurrentColor = rawPickCurrentSlot = rawPickCollectedMask = 0U;
         missionReport("RAW_PICK");
-    } else if (nextIndex == 5U || nextIndex == 10U) {
+    } else if (nextIndex == 7U || nextIndex == 12U) {
         missionPhase = MISSION_RING_ALIGN;
         missionReport("RING_ALIGN");
-    } else if (nextIndex == 7U || nextIndex == 12U) {
+    } else if (nextIndex == 9U || nextIndex == 14U) {
+        uint8_t rings[3];
+        if (!missionTaskStorageRings(&missionTask, nextIndex == 14U, rings)) {
+            missionAbort("stack_colors");
+            return;
+        }
         missionPhase = MISSION_TEMP_ALIGN;
-        missionBuildStoragePlace(missionWorkActions,
-                                 nextIndex == 12U ? 2U : 1U);
+        missionBuildTaskPlace(missionWorkActions, rings,
+                             nextIndex == 14U ? 2U : 1U, 0U);
         missionReport("TEMP_ALIGN");
     }
 }
@@ -2695,21 +3095,23 @@ static void serviceMission(void)
         return;
     }
     if (missionPhase == MISSION_QR_WAIT) {
-        if ((int32_t)(clockMs - missionDeadline) >= 0) missionContinue();
+        if (!missionTaskValid && missionQrValid) {
+            missionTaskValid = missionTaskParse(missionQrCode, &missionTask);
+            missionQrValid = 0U;
+            serialSendString("TASK SET code=");
+            serialSendString(missionQrCode);
+            serialSendString("\r\n");
+        }
+        if (missionTaskValid && (int32_t)(clockMs - missionDeadline) >= 0)
+            missionContinue();
         return;
     }
     if (missionPhase == MISSION_RAW_PICK) {
-        if (rawPickItemIndex != missionObservedItem) {
-            missionObservedItem = rawPickItemIndex;
-            missionDeadline = clockMs + 30000U;
-        }
         if (rawPickItemIndex == 3U && !visionPickActive &&
             !mechanismActionActive) {
+            /* Preserve the alignment offset so pickup can return to its baseline. */
             missionPhase = MISSION_RECENTER;
             missionReport("RECENTER");
-        } else if (visionSession.state != VISION_STATE_PICK &&
-                   (int32_t)(clockMs - missionDeadline) >= 0) {
-            missionAbort("material_timeout");
         }
         return;
     }
@@ -2718,7 +3120,8 @@ static void serviceMission(void)
         if (!missionActionStarted) {
             if (!mechanismState.valid || mechanismState.running ||
                 mechanismState.current.liftDmm != 0U ||
-                mechanismState.current.turretDdeg != 2700U) {
+                (mechanismState.current.turretDdeg != 2720U &&
+                 mechanismState.current.turretDdeg != 650U)) {
                 missionAbort("ring_prep_pose");
                 return;
             }
@@ -2730,27 +3133,31 @@ static void serviceMission(void)
             missionActionStarted = 1U;
             missionReport("RING_PREP");
         } else if (missionActionStarted == 1U && !mechanismState.running) {
-            uint8_t materialAlign = missionPhase == MISSION_TEMP_ALIGN && routeIndex == 12U;
+            uint8_t materialAlign = missionPhase == MISSION_TEMP_ALIGN && routeIndex == 14U;
+            uint8_t item = 0U;
+            /* Prefer an unnumbered ring; selector names its fallback material. */
+            while (item < 2U && missionTask.rings[0][item] != 2U) ++item;
             if (!mechanismState.valid ||
-                mechanismState.current.horizontalDmm != -500 ||
+                mechanismState.current.horizontalDmm != missionRingObservePose.horizontalDmm ||
                 mechanismState.current.liftDmm != 0U ||
-                mechanismState.current.turretDdeg != 2700U) {
+                mechanismState.current.turretDdeg != 2720U) {
                 missionAbort("ring_prep_failed");
                 return;
             }
             if (!vision_session_start(&visionSession,
-                                      materialAlign ? VISION_MODE_MATERIAL : VISION_MODE_RING,
-                                      materialAlign ? rawPickColors[0][0] : 0U,
+                                      VISION_MODE_RING,
+                                      materialAlign ? missionTask.colors[0][item] : 0U,
                                       2U, &visionRingCalibration[1], clockMs)) {
                 missionAbort("ring_start");
                 return;
             }
             visionSession.waitForTarget = 1U;
+            if (materialAlign) visionSession.requestFlags = VISION_FLAG_RING_NO_DIGIT;
             missionActionStarted = 2U;
             printVisionState();
         } else if (missionActionStarted == 2U &&
                    visionSession.state == VISION_STATE_ALIGNED) {
-            /* Adopt the aligned pose as this area's nominal station baseline. */
+            /* Continue the next distance leg from the locally aligned station. */
             missionOffsetForward = missionOffsetRight = 0.0f;
             missionPhase = missionPhase == MISSION_TEMP_ALIGN ?
                            MISSION_TEMP_PLACE : MISSION_COARSE_PLACE;
@@ -2768,11 +3175,15 @@ static void serviceMission(void)
             const MechanismInitialState *initial = &missionInitial;
             uint16_t count = MISSION_PLACE_COUNT;
             if (missionPhase == MISSION_COARSE_PLACE) {
-                actions = missionCoarsePlaceActions;
+                missionBuildTaskPlace(missionWorkActions,
+                                      missionTask.rings[routeIndex == 12U], 1U, 1U);
                 initial = &missionCoarseInitial;
                 count = MISSION_COARSE_PLACE_COUNT;
             } else if (missionPhase == MISSION_COARSE_PICK) {
-                missionBuildPickBack(missionPickBackActions);
+                missionBuildTaskPickBack(missionPickBackActions,
+                                         missionTask.rings[routeIndex == 12U],
+                                         missionTask.rings[routeIndex == 12U][2],
+                                         routeIndex == 12U ? -470 : -450);
                 actions = missionPickBackActions;
                 initial = &missionCoarseInitial;
                 count = MISSION_PICK_BACK_COUNT;
@@ -2799,12 +3210,54 @@ static void serviceMission(void)
         }
         return;
     }
+    if (missionPhase == MISSION_RAW_EXIT) {
+        if (motionMode) return;
+        missionContinue();
+        return;
+    }
     if (missionPhase != MISSION_RECENTER) return;
     if (motionMode || mechanismState.running || mechanismActionActive) return;
     if (!mechanismState.valid || mechanismState.current.horizontalDmm != 0 ||
         mechanismState.current.liftDmm != 0U ||
-        mechanismState.current.turretDdeg != 2700U) {
+        (mechanismState.current.turretDdeg != 2720U &&
+          !((routeIndex == 4U || routeIndex == 7U ||
+             routeIndex == 11U || routeIndex == 12U) &&
+           mechanismState.current.turretDdeg == 650U))) {
         missionAbort("unsafe_recenter_pose");
+        return;
+    }
+    if (routeIndex == 4U) {
+        /* RAW_1 faces left: body right is map up; body forward is map left.
+         * Restore map Y now and merge map X compensation into the left leg. */
+        routeFirstLeftCorrection = routeRound(missionOffsetForward);
+        if (routeAbs(missionOffsetRight) <= 1.0f) {
+            missionContinue();
+            return;
+        }
+        if (!startVisionMotion(0.0f, -missionOffsetRight, 15U, 0U)) {
+            missionAbort("raw_exit_failed");
+            return;
+        }
+        missionPhase = MISSION_RAW_EXIT;
+        missionReport("RAW_EXIT_VERTICAL");
+        return;
+    }
+    if (routeIndex == 11U) {
+        int16_t bodyForward, bodyRight;
+        routeBody(0, 50, routeHeading, &bodyForward, &bodyRight);
+        forward = (float)bodyForward - missionOffsetForward;
+        right = (float)bodyRight - missionOffsetRight;
+        /* Reach the baseline plus map-right 50 mm in one position move. */
+        if (routeAbs(forward) <= 1.0f && routeAbs(right) <= 1.0f) {
+            missionContinue();
+            return;
+        }
+        if (!startVisionMotion(forward, right, 15U, 0U)) {
+            missionAbort("raw_exit_failed");
+            return;
+        }
+        missionPhase = MISSION_RAW_EXIT;
+        missionReport("RAW_EXIT_RIGHT_50");
         return;
     }
     if (routeAbs(missionOffsetForward) <= 1.0f &&
@@ -2858,6 +3311,29 @@ static uint8_t processVisionCommand(const char *command)
         failVision("COMMAND_CONFLICT");
         return 1U;
     }
+    if (strncmp(command, "vision sample ring ", 19U) == 0) {
+        cursor = command + 19U;
+        if (!mechanismParseUnsigned(&cursor, &value) || value != 2U ||
+            !mechanismParseUnsigned(&cursor, &forwardMilli) || forwardMilli == 0U ||
+            !mechanismAtEnd(cursor)) {
+            serialSendString("VISION ERROR reason=SAMPLE_RANGE\r\n");
+            return 1U;
+        }
+        if (motionMode || routeActive || mechanismState.running ||
+            mechanismActionActive || servoChannelMoving[0] || servoChannelMoving[1] ||
+            servoChannelMoving[2] || !imuValid || clockMs - imuStamp > 250U ||
+            motionInterrupted()) {
+            serialSendString("VISION ERROR reason=SAMPLE_REQUIRES_IDLE_FRESH_IMU\r\n");
+            return 1U;
+        }
+        if (!vision_session_start_sample(&visionSession, &visionRingCalibration[1],
+                                         forwardMilli, clockMs)) {
+            serialSendString("VISION ERROR reason=SAMPLE_REJECTED\r\n");
+            return 1U;
+        }
+        printVisionState();
+        return 1U;
+    }
     if (strncmp(command, "vision pick material ", 21U) == 0) {
         cursor = command + 21U;
         if (!mechanismParseUnsigned(&cursor, &value) ||
@@ -2893,7 +3369,7 @@ static uint8_t processVisionCommand(const char *command)
         }
         if (mechanismState.current.horizontalDmm != 0 ||
             mechanismState.current.liftDmm != 0U ||
-            mechanismState.current.turretDdeg != 2700U) {
+            mechanismState.current.turretDdeg != 2720U) {
             serialSendString("VISION ERROR reason=PICK_REQUIRES_INITIAL_POSE\r\n");
             return 1U;
         }
@@ -2989,7 +3465,9 @@ static uint8_t processVisionCommand(const char *command)
             serialSendString("VISION ERROR reason=JOG_RANGE\r\n");
             return 1U;
         }
-        if (visionSession.state != VISION_STATE_PAUSED || motionMode || routeActive ||
+        if ((visionSession.state != VISION_STATE_PAUSED &&
+             !(visionSession.state == VISION_STATE_IDLE && visionSession.sampleOnly)) ||
+            motionMode || routeActive ||
             mechanismState.running || mechanismActionActive || !armed ||
             !imuValid || clockMs - imuStamp > 250U) {
             serialSendString("VISION ERROR reason=JOG_REQUIRES_PAUSED_ARMED_IDLE_FRESH_IMU\r\n");
@@ -3051,13 +3529,111 @@ static uint8_t processVisionCommand(const char *command)
     return 1U;
 }
 
+static uint8_t processTaskCommand(const char *command)
+{
+    if (strncmp(command, "task ", 5U) != 0) return 0U;
+    if (routeActive || motionMode || mechanismState.running ||
+        mechanismActionActive || visionSessionActive()) {
+        serialSendString("ERR TASK: busy; stop first\r\n");
+    } else if (!missionTaskParse(command + 5U, &missionTask)) {
+        serialSendString("ERR TASK: use CCC+PPP+CCC+PPP; colors 1..6, rings 123 permutation\r\n");
+    } else {
+        missionTaskValid = 1U;
+        serialSendString("TASK SET code=");
+        serialSendString(command + 5U);
+        serialSendString("\r\n");
+    }
+    return 1U;
+}
+
+static void prepareOfflineMission(void)
+{
+    MechanismPose zero = rawPickInitial.pose;
+    zero.horizontalDmm = 0;
+    zero.liftDmm = 0U;
+    zero.turretDdeg = 650U;
+    /* The user confirms the axes are physically at zero on power-on. */
+    mechanismStateInitialize(&mechanismState, &zero);
+    visionMaterialCalibration.calibrated = 1U;
+    visionRingCalibration[1] = visionMaterialCalibration;
+    missionButtonRpm = ROUTE_RPM;
+    missionButtonReady = 1U;
+}
+
+static void startButtonMission(uint8_t zone)
+{
+    char command[24] = "route mission 1 ";
+    char digits[3];
+    uint8_t count = 0U, length = 16U;
+    uint16_t value = missionButtonRpm;
+    if (motionMode || routeActive || mechanismState.running ||
+        mechanismActionActive || visionSessionActive()) {
+        serialSendString("BUTTON IGNORED busy\r\n");
+        return;
+    }
+    if (!missionButtonReady || emergencyStop || jogCanFault) {
+        serialSendString("BUTTON ERROR prepare task first\r\n");
+        return;
+    }
+    missionButtonReady = 0U;
+    command[14] = (char)('0' + zone);
+    do {
+        digits[count++] = (char)('0' + value % 10U);
+        value /= 10U;
+    } while (value != 0U);
+    while (count > 0U) command[length++] = digits[--count];
+    command[length] = '\0';
+    /* The physical press authorizes only this start; all route checks remain. */
+    missionOffline = 1U;
+    armed = 1U;
+    processRouteCommand(command);
+    armed = 0U;
+    if (!routeActive || !missionActive) {
+        missionOffline = 0U;
+        serialSendString("ROUTE INVALID reason=button_start_rejected\r\n");
+    }
+}
+
+static void serviceMissionButton(void)
+{
+    uint8_t high = GPIO_ReadInputDataBit(GPIOC, GPIO_Pin_9) != 0U;
+    if (high != missionButtonRawHigh) {
+        missionButtonRawHigh = high;
+        missionButtonChangedAt = clockMs;
+    }
+    if (high != missionButtonStableHigh &&
+        clockMs - missionButtonChangedAt >= MISSION_BUTTON_DEBOUNCE_MS) {
+        missionButtonStableHigh = high;
+        if (!high) {
+            missionButtonPressedAt = missionButtonChangedAt;
+            missionButtonLongSent = 0U;
+        } else if (!missionButtonLongSent) {
+            missionButtonLongSent = 1U;
+            startButtonMission(missionButtonChangedAt - missionButtonPressedAt >=
+                               MISSION_BUTTON_LONG_PRESS_MS ? 2U : 1U);
+        }
+    }
+    if (!high && !missionButtonStableHigh && !missionButtonLongSent &&
+        clockMs - missionButtonPressedAt >= MISSION_BUTTON_LONG_PRESS_MS) {
+        missionButtonLongSent = 1U;
+        startButtonMission(2U);
+    }
+}
+
 static void processCommand(const char *command)
 {
     uint16_t id, value;
     if (emergencyStop) return;
+    if (processTaskCommand(command)) return;
     if (strcmp(command, "hb") == 0) {
         hostHeartbeatActive = 1U;
         hostHeartbeatStamp = clockMs;
+        return;
+    }
+    if (processAvoidanceCommand(command)) return;
+    if (avoidance.active && strcmp(command, "stop") != 0 && strcmp(command, "X") != 0 &&
+        strcmp(command, "x") != 0 && strcmp(command, "disable") != 0) {
+        serialSendString("ERR AV: avoidance active; stop first\r\n");
         return;
     }
     if (processVisionCommand(command)) return;
@@ -3159,7 +3735,7 @@ static void processCommand(const char *command)
         armed = 1U;
         serialSendString("ARMED for one enable or motion command\r\n");
     } else if (strcmp(command, "disable") == 0) {
-        uint8_t hadFullRoute = fullRouteRunning;
+        uint8_t hadFullRoute = fullRouteRunning || missionButtonReady;
         uint8_t hadVision = visionSessionActive() || motionMode == 4U;
         if (visionPickActive) stopServoMotion();
         stopAllMotors();
@@ -3183,7 +3759,7 @@ static void processCommand(const char *command)
     } else if (strcmp(command, "X") == 0 || strcmp(command, "x") == 0 ||
                strcmp(command, "stop") == 0) {
         uint8_t hadNavigation = navInitialized;
-        uint8_t hadFullRoute = fullRouteRunning;
+        uint8_t hadFullRoute = fullRouteRunning || missionButtonReady;
         uint8_t hadVision = visionSessionActive() || motionMode == 4U;
         stopServoMotion();
         stopAllMotors();
@@ -3197,6 +3773,9 @@ static void processCommand(const char *command)
         serialSendString("ERR: unknown command; send 'help'\r\n");
     }
 }
+
+#include "avoidance_firmware.h"
+#include "qr_camera_control.h"
 
 void UART5_IRQHandler(void)
 {
@@ -3240,22 +3819,31 @@ int main(void)
     delay_init(168U);
     board_init();
     clockInit();
+    missionButtonInit();
     serialInit();
     hwt101Init(115200U);
     visionUartInit();
     qrUartInit();
     tjcDisplayInit();
+    tjcDisplayResetCounts();
 
     mechanismStateReset(&mechanismState);
     vision_session_init(&visionSession);
     stopAllMotors();
+    servoSetTarget(4U, 65U, 2200U);
+    servoSetTarget(2U, rawPickInitial.gripperCloseDeg, rawPickInitial.gripperDps10);
+    servoSetTarget(3U, 26U, 1200U);
+    prepareOfflineMission();
+    /* Startup is an empty gripper even though the boot command closes it. */
+    gripperMayHoldMaterial = 0U;
+    serialSendString("BOOT axes=0 turret=65 platform=26; PC9 short=zone1 long=zone2; task from QR\r\n");
     serialSendString("\r\nYYB mecanum/servo jog ready; motors 1..6 stopped; disarmed.\r\n");
     printHelp();
 
     for (;;) {
         if (jogCanFault) {
             uint8_t hadNavigation = navInitialized;
-            uint8_t hadFullRoute = fullRouteRunning;
+            uint8_t hadFullRoute = fullRouteRunning || missionButtonReady;
             uint8_t hadVision = visionSessionActive() || motionMode == 4U;
             if (visionPickActive) stopServoMotion();
             stopAllMotors();
@@ -3267,7 +3855,7 @@ int main(void)
         }
         if (emergencyStop) {
             uint8_t hadNavigation = navInitialized;
-            uint8_t hadFullRoute = fullRouteRunning;
+            uint8_t hadFullRoute = fullRouteRunning || missionButtonReady;
             uint8_t hadVision = visionSessionActive() || motionMode == 4U;
             stopServoMotion();
             stopAllMotors();
@@ -3275,7 +3863,13 @@ int main(void)
             emergencyStop = 0U;
             rxLength = 0U;
             rxReady = 0U;
-            __enable_irq();
+            if (obstacleStopPending) {
+                obstacleStopPending = 0U;
+                __enable_irq();
+                serialSendString("OBSTACLE STOP; black blob detected; disarmed\r\n");
+            } else {
+                __enable_irq();
+            }
             if (hadNavigation) serialSendString("NAV INVALID reason=emergency_stop\r\n");
             if (hadFullRoute) serialSendString("ROUTE INVALID reason=emergency_stop\r\n");
             if (hadVision) failVision("EMERGENCY_STOP");
@@ -3291,14 +3885,17 @@ int main(void)
             processCommand(command);
         }
         serviceHostWatchdog();
+        serviceMissionButton();
         serviceMotion();
         serviceVision();
         serviceQrScan();
         serviceMechanism();
         mechanismActionService();
         serviceRoute();
+        serviceAvoidance();
         serviceRawPickRoute();
         serviceMission();
+        serviceQrCamera();
         reportCompletedServoMoves();
     }
 }
