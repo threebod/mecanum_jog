@@ -19,9 +19,14 @@ int main(void)
     assert(rampSpeed(2001, 2000, 30) == 0);
     assert(motionRequestValid(0, 100, 10));
     assert(motionRequestValid(0, 500, 120));
-    assert(!motionRequestValid(0, 200, 121));
+    assert(motionRequestValid(0, 200, 121));
+    assert(motionRequestValid(0, 500, 250));
+    assert(!motionRequestValid(0, 500, 251));
+    assert(!motionRequestValid(0, 500, 9));
     assert(!motionRequestValid(0, 250, 30));
     assert(motionRequestValid(1, 1000, 120));
+    assert(!motionRequestValid(1, 1000, 121));
+    assert(!motionRequestValid(2, 1000, 250));
     assert(!motionRequestValid(1, 999, 30));
     for (id = 1; id <= 4; ++id) {
         assert(wheelSpeed(id, 30, 0, 1000) == 30);

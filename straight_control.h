@@ -6,7 +6,7 @@
 static uint8_t motionRequestValid(uint8_t heading, uint16_t amount,
                                   uint16_t rpm)
 {
-    if (rpm < 10U || rpm > 120U) return 0U;
+    if (rpm < 10U || rpm > (heading ? 120U : 250U)) return 0U;
     if (heading) return amount >= 1000U && amount <= 5000U;
     return amount >= 100U && amount <= 500U && amount % 100U == 0U;
 }

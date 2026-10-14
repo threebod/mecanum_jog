@@ -1,0 +1,3943 @@
+{
+    "version": 1,
+    "name": "当前两轮取放_启停区2_人工确认版",
+    "steps": [
+        {
+            "type": "confirm",
+            "prompt": "从启停区2车体中心(2250,150)出发，车头朝地图上方。出发前在动作录入页确认实际水平0、升降0、云台65°并初始化，夹爪张开70°、平台1槽26°。本文件使用默认200 RPM，横移按固件上限限速。人工识别衔接版，非完整自动比赛流程；确认方向、限位和急停后继续。"
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "出发前核对机构与舵机初始状态（不运动）",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": 0,
+                    "liftDmm": 0,
+                    "turretDdeg": 650,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 1,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "type": "wait",
+                        "waitMs": 0
+                    }
+                ]
+            }
+        },
+        {
+            "type": "move",
+            "direction": "A",
+            "distanceMm": 150,
+            "rpm": 200
+        },
+        {
+            "type": "move",
+            "direction": "W",
+            "distanceMm": 1050,
+            "rpm": 200
+        },
+        {
+            "type": "turn",
+            "direction": "R",
+            "degrees": 90
+        },
+        {
+            "type": "wait",
+            "waitMs": 1000
+        },
+        {
+            "type": "move",
+            "direction": "A",
+            "distanceMm": 830,
+            "rpm": 200
+        },
+        {
+            "type": "turn",
+            "direction": "L",
+            "degrees": 180
+        },
+        {
+            "type": "move",
+            "direction": "W",
+            "distanceMm": 930,
+            "rpm": 200
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "第1轮取料：第1件拍照准备",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": 0,
+                    "liftDmm": 0,
+                    "turretDdeg": 650,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 1,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        },
+                        "waitMs": 0
+                    }
+                ]
+            }
+        },
+        {
+            "type": "confirm",
+            "prompt": "人工确认本轮第一个稳定进入识别区域的物料已对准，不限定颜色。当前编辑器不能自动执行不限颜色对准；必要时手动平移摆正车位，不改变车头朝向。后续三件只确认颜色，不再调整底盘；对准位移不回退。完成后继续。"
+        },
+        {
+            "type": "confirm",
+            "prompt": "第1轮第1件：等待绿色物料（颜色编号4）稳定到达固定抓取位置。人工确认目标颜色、抓取位置、稳定性及机构净空后继续；下一步夹取并放入平台1槽，不再微调底盘。"
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "第1轮夹取绿色→平台1槽",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": -500,
+                    "liftDmm": 0,
+                    "turretDdeg": 2700,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 1,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 0,
+                            "turretDdeg": 2680,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 500,
+                            "turretDdeg": 2680,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 0,
+                            "turretDdeg": 2680,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 250,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 2
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 0,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "第1轮取料：第2件拍照准备",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": 0,
+                    "liftDmm": 0,
+                    "turretDdeg": 2700,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 2,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        },
+                        "waitMs": 0
+                    }
+                ]
+            }
+        },
+        {
+            "type": "confirm",
+            "prompt": "第1轮第2件：等待黄色物料（颜色编号2）稳定到达固定抓取位置。人工确认目标颜色、抓取位置、稳定性及机构净空后继续；下一步夹取并放入平台2槽，不再微调底盘。"
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "第1轮夹取黄色→平台2槽",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": -500,
+                    "liftDmm": 0,
+                    "turretDdeg": 2700,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 2,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 2
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 0,
+                            "turretDdeg": 2680,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 500,
+                            "turretDdeg": 2680,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 0,
+                            "turretDdeg": 2680,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 250,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 3
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 0,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "第1轮取料：第3件拍照准备",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": 0,
+                    "liftDmm": 0,
+                    "turretDdeg": 2700,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 3,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        },
+                        "waitMs": 0
+                    }
+                ]
+            }
+        },
+        {
+            "type": "confirm",
+            "prompt": "第1轮第3件：等待浅蓝色物料（颜色编号6）稳定到达固定抓取位置。人工确认目标颜色、抓取位置、稳定性及机构净空后继续；下一步夹取并放入平台3槽，不再微调底盘。"
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "第1轮夹取浅蓝色→平台3槽",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": -500,
+                    "liftDmm": 0,
+                    "turretDdeg": 2700,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 3,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 3
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 0,
+                            "turretDdeg": 2680,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 500,
+                            "turretDdeg": 2680,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 0,
+                            "turretDdeg": 2680,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 250,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 3
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 0,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "type": "move",
+            "direction": "A",
+            "distanceMm": 1680,
+            "rpm": 200
+        },
+        {
+            "type": "turn",
+            "direction": "R",
+            "degrees": 180
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "第1轮粗加工：圆环观察准备",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": 0,
+                    "liftDmm": 0,
+                    "turretDdeg": 2700,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 3,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 90,
+                            "liftAccel": 50,
+                            "turretDps10": 1800
+                        },
+                        "waitMs": 0
+                    }
+                ]
+            }
+        },
+        {
+            "type": "vision",
+            "ring": true,
+            "target": 2,
+            "forwardMilli": 640,
+            "rightMilli": 673
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "第1轮粗加工：三件放置（第三件原位直接回收）",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": -500,
+                    "liftDmm": 0,
+                    "turretDdeg": 2700,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 3,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 0,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 300,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -240,
+                            "liftDmm": 0,
+                            "turretDdeg": 2670,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -240,
+                            "liftDmm": 1480,
+                            "turretDdeg": 2670,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 2
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -240,
+                            "liftDmm": 0,
+                            "turretDdeg": 2670,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 260,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 500,
+                            "liftDmm": 0,
+                            "turretDdeg": 2320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 500,
+                            "liftDmm": 1300,
+                            "turretDdeg": 2320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 500,
+                            "liftDmm": 0,
+                            "turretDdeg": 2320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 3
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 300,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 300,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 3080,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 50,
+                            "liftDmm": 0,
+                            "turretDdeg": 3080,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 50,
+                            "liftDmm": 1300,
+                            "turretDdeg": 3080,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    }
+                ]
+            }
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "第1轮粗加工：按3→1→2回收至原平台槽",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": 50,
+                    "liftDmm": 1300,
+                    "turretDdeg": 3080,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 3,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 3
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 50,
+                            "liftDmm": 0,
+                            "turretDdeg": 3080,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 300,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -240,
+                            "liftDmm": 0,
+                            "turretDdeg": 2670,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -240,
+                            "liftDmm": 1480,
+                            "turretDdeg": 2670,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -240,
+                            "liftDmm": 0,
+                            "turretDdeg": 2670,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 300,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 2
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 500,
+                            "liftDmm": 0,
+                            "turretDdeg": 2320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 500,
+                            "liftDmm": 1300,
+                            "turretDdeg": 2320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 500,
+                            "liftDmm": 0,
+                            "turretDdeg": 2320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 260,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 0,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    }
+                ]
+            }
+        },
+        {
+            "type": "move",
+            "direction": "A",
+            "distanceMm": 800,
+            "rpm": 200
+        },
+        {
+            "type": "move",
+            "direction": "S",
+            "distanceMm": 900,
+            "rpm": 200
+        },
+        {
+            "type": "turn",
+            "direction": "R",
+            "degrees": 90
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "第1轮暂存：观察准备",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": 0,
+                    "liftDmm": 0,
+                    "turretDdeg": 2700,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 2,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 90,
+                            "liftAccel": 50,
+                            "turretDps10": 1800
+                        },
+                        "waitMs": 0
+                    }
+                ]
+            }
+        },
+        {
+            "type": "vision",
+            "ring": true,
+            "target": 2,
+            "forwardMilli": 640,
+            "rightMilli": 673
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "第1轮暂存：第一层放置",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": -500,
+                    "liftDmm": 0,
+                    "turretDdeg": 2700,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 2,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 0,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 300,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -240,
+                            "liftDmm": 0,
+                            "turretDdeg": 2670,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -240,
+                            "liftDmm": 1480,
+                            "turretDdeg": 2670,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 2
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -240,
+                            "liftDmm": 0,
+                            "turretDdeg": 2670,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 260,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 500,
+                            "liftDmm": 0,
+                            "turretDdeg": 2320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 500,
+                            "liftDmm": 1400,
+                            "turretDdeg": 2320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 500,
+                            "liftDmm": 0,
+                            "turretDdeg": 2320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 3
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 300,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 300,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 3080,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 50,
+                            "liftDmm": 0,
+                            "turretDdeg": 3080,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 50,
+                            "liftDmm": 1450,
+                            "turretDdeg": 3080,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 50,
+                            "liftDmm": 0,
+                            "turretDdeg": 3080,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 0,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "type": "move",
+            "direction": "A",
+            "distanceMm": 800,
+            "rpm": 200
+        },
+        {
+            "type": "move",
+            "direction": "S",
+            "distanceMm": 980,
+            "rpm": 200
+        },
+        {
+            "type": "move",
+            "direction": "A",
+            "distanceMm": 50,
+            "rpm": 200
+        },
+        {
+            "type": "turn",
+            "direction": "R",
+            "degrees": 90
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "第2轮取料：第1件拍照准备",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": 0,
+                    "liftDmm": 0,
+                    "turretDdeg": 2700,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 3,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        },
+                        "waitMs": 0
+                    }
+                ]
+            }
+        },
+        {
+            "type": "confirm",
+            "prompt": "人工确认本轮第一个稳定进入识别区域的物料已对准，不限定颜色。当前编辑器不能自动执行不限颜色对准；必要时手动平移摆正车位，不改变车头朝向。后续三件只确认颜色，不再调整底盘；对准位移不回退。完成后继续。"
+        },
+        {
+            "type": "confirm",
+            "prompt": "第2轮第1件：等待黑色物料（颜色编号5）稳定到达固定抓取位置。人工确认目标颜色、抓取位置、稳定性及机构净空后继续；下一步夹取并放入平台1槽，不再微调底盘。"
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "第2轮夹取黑色→平台1槽",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": -500,
+                    "liftDmm": 0,
+                    "turretDdeg": 2700,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 3,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 0,
+                            "turretDdeg": 2680,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 500,
+                            "turretDdeg": 2680,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 0,
+                            "turretDdeg": 2680,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 250,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 2
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 0,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "第2轮取料：第2件拍照准备",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": 0,
+                    "liftDmm": 0,
+                    "turretDdeg": 2700,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 2,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        },
+                        "waitMs": 0
+                    }
+                ]
+            }
+        },
+        {
+            "type": "confirm",
+            "prompt": "第2轮第2件：等待红色物料（颜色编号1）稳定到达固定抓取位置。人工确认目标颜色、抓取位置、稳定性及机构净空后继续；下一步夹取并放入平台2槽，不再微调底盘。"
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "第2轮夹取红色→平台2槽",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": -500,
+                    "liftDmm": 0,
+                    "turretDdeg": 2700,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 2,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 2
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 0,
+                            "turretDdeg": 2680,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 500,
+                            "turretDdeg": 2680,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 0,
+                            "turretDdeg": 2680,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 250,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 3
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 0,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "第2轮取料：第3件拍照准备",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": 0,
+                    "liftDmm": 0,
+                    "turretDdeg": 2700,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 3,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        },
+                        "waitMs": 0
+                    }
+                ]
+            }
+        },
+        {
+            "type": "confirm",
+            "prompt": "第2轮第3件：等待蓝色物料（颜色编号3）稳定到达固定抓取位置。人工确认目标颜色、抓取位置、稳定性及机构净空后继续；下一步夹取并放入平台3槽，不再微调底盘。"
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "第2轮夹取蓝色→平台3槽",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": -500,
+                    "liftDmm": 0,
+                    "turretDdeg": 2700,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 3,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 3
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 0,
+                            "turretDdeg": 2680,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 500,
+                            "turretDdeg": 2680,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 0,
+                            "turretDdeg": 2680,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -200,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 250,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 3
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 0,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "type": "move",
+            "direction": "A",
+            "distanceMm": 1680,
+            "rpm": 200
+        },
+        {
+            "type": "turn",
+            "direction": "R",
+            "degrees": 180
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "第2轮粗加工：圆环观察准备",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": 0,
+                    "liftDmm": 0,
+                    "turretDdeg": 2700,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 3,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 90,
+                            "liftAccel": 50,
+                            "turretDps10": 1800
+                        },
+                        "waitMs": 0
+                    }
+                ]
+            }
+        },
+        {
+            "type": "vision",
+            "ring": true,
+            "target": 2,
+            "forwardMilli": 640,
+            "rightMilli": 673
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "第2轮粗加工：三件放置（第三件原位直接回收）",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": -500,
+                    "liftDmm": 0,
+                    "turretDdeg": 2700,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 3,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 0,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 300,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -240,
+                            "liftDmm": 0,
+                            "turretDdeg": 2670,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -240,
+                            "liftDmm": 1480,
+                            "turretDdeg": 2670,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 2
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -240,
+                            "liftDmm": 0,
+                            "turretDdeg": 2670,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 260,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 500,
+                            "liftDmm": 0,
+                            "turretDdeg": 2320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 500,
+                            "liftDmm": 1300,
+                            "turretDdeg": 2320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 500,
+                            "liftDmm": 0,
+                            "turretDdeg": 2320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 3
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 300,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 300,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 3080,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 50,
+                            "liftDmm": 0,
+                            "turretDdeg": 3080,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 50,
+                            "liftDmm": 1300,
+                            "turretDdeg": 3080,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    }
+                ]
+            }
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "第2轮粗加工：按3→1→2回收至原平台槽",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": 50,
+                    "liftDmm": 1300,
+                    "turretDdeg": 3080,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 3,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 3
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 50,
+                            "liftDmm": 0,
+                            "turretDdeg": 3080,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 300,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -240,
+                            "liftDmm": 0,
+                            "turretDdeg": 2670,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -240,
+                            "liftDmm": 1480,
+                            "turretDdeg": 2670,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -240,
+                            "liftDmm": 0,
+                            "turretDdeg": 2670,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 300,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 2
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 500,
+                            "liftDmm": 0,
+                            "turretDdeg": 2320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 500,
+                            "liftDmm": 1300,
+                            "turretDdeg": 2320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 500,
+                            "liftDmm": 0,
+                            "turretDdeg": 2320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 260,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 0,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    }
+                ]
+            }
+        },
+        {
+            "type": "move",
+            "direction": "A",
+            "distanceMm": 800,
+            "rpm": 200
+        },
+        {
+            "type": "move",
+            "direction": "S",
+            "distanceMm": 900,
+            "rpm": 200
+        },
+        {
+            "type": "turn",
+            "direction": "R",
+            "degrees": 90
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "第2轮暂存：观察准备",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": 0,
+                    "liftDmm": 0,
+                    "turretDdeg": 2700,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 2,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 90,
+                            "liftAccel": 50,
+                            "turretDps10": 1800
+                        },
+                        "waitMs": 0
+                    }
+                ]
+            }
+        },
+        {
+            "type": "confirm",
+            "prompt": "第二轮暂存：人工对准第一轮留在中间的绿色物料中心（颜色4）。原固件采用圆环2的ROI、锚点和比例，当前编辑器不能表达这个组合。只平移调整车位，不改变车头朝向，不使用普通物料对准代替；确认对准与堆叠净空后继续。"
+        },
+        {
+            "type": "action",
+            "action": {
+                "version": 1,
+                "name": "第2轮暂存：第二层堆叠（升降680/600/650）",
+                "loopEnabled": false,
+                "loopCount": 2,
+                "initialState": {
+                    "horizontalDmm": -500,
+                    "liftDmm": 0,
+                    "turretDdeg": 2700,
+                    "horizontalRpm": 500,
+                    "horizontalAccel": 200,
+                    "liftRpm": 1000,
+                    "liftAccel": 200,
+                    "turretDps10": 1800,
+                    "gripper": "open",
+                    "platform": 2,
+                    "gripperOpenDeg": 70,
+                    "gripperCloseDeg": 35,
+                    "gripperDps10": 1800,
+                    "platformDps10": 1800,
+                    "platformDeg": [
+                        26,
+                        146,
+                        264
+                    ]
+                },
+                "steps": [
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 0,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 300,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -240,
+                            "liftDmm": 0,
+                            "turretDdeg": 2670,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -240,
+                            "liftDmm": 680,
+                            "turretDdeg": 2670,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 2
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -240,
+                            "liftDmm": 0,
+                            "turretDdeg": 2670,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 260,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 500,
+                            "liftDmm": 0,
+                            "turretDdeg": 2320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 500,
+                            "liftDmm": 600,
+                            "turretDdeg": 2320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 500,
+                            "liftDmm": 0,
+                            "turretDdeg": 2320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "platform",
+                        "value": 3
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 300,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 300,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 0
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 1320,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": -500,
+                            "liftDmm": 0,
+                            "turretDdeg": 3080,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 50,
+                            "liftDmm": 0,
+                            "turretDdeg": 3080,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 50,
+                            "liftDmm": 650,
+                            "turretDdeg": 3080,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "gripper",
+                        "value": 1
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 50,
+                            "liftDmm": 0,
+                            "turretDdeg": 3080,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    },
+                    {
+                        "waitMs": 0,
+                        "type": "pose",
+                        "pose": {
+                            "horizontalDmm": 0,
+                            "liftDmm": 0,
+                            "turretDdeg": 2700,
+                            "horizontalRpm": 500,
+                            "horizontalAccel": 200,
+                            "liftRpm": 1000,
+                            "liftAccel": 200,
+                            "turretDps10": 1800
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "type": "move",
+            "direction": "A",
+            "distanceMm": 800,
+            "rpm": 200
+        },
+        {
+            "type": "move",
+            "direction": "A",
+            "distanceMm": 900,
+            "rpm": 200
+        },
+        {
+            "type": "turn",
+            "direction": "R",
+            "degrees": 180
+        },
+        {
+            "type": "move",
+            "direction": "S",
+            "distanceMm": 1050,
+            "rpm": 200
+        },
+        {
+            "type": "move",
+            "direction": "D",
+            "distanceMm": 150,
+            "rpm": 200
+        }
+    ]
+}

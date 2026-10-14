@@ -7,7 +7,9 @@
  * Headings: 0 up, 1 left, 2 down, -1 right, 4 keep previous heading.
  * No wheel/ground odometry: progress is an estimate from commanded RPM.
  * Replace scales with measured actual_mm / nominal_mm on the test surface. */
-#define ROUTE_FORWARD_SCALE 1.0f
+/* line W 500 120 verified at 500 mm with 9.9 pulses/mm; 3200 pulses/rev.
+ * Scale = 3200 / (9.9 * ROUTE_MM_PER_REV), rounded to route tune precision. */
+#define ROUTE_FORWARD_SCALE 1.0289f
 /* Six 100 RPM center tests averaged 103.9 cm vs 105 cm nominal at 90%. */
 #define ROUTE_LATERAL_SCALE 0.9f
 #define ROUTE_MM_PER_REV    314.159265f /* pi * 100 mm, direct drive G=1 */
@@ -22,7 +24,7 @@
 #define ROUTE_HEADING_KD    0.12f
 #define ROUTE_HEADING_MAX_RPM 12.0f
 #define ROUTE_HEADING_INTEGRAL_LIMIT 12.0f
-#define ROUTE_COUNT         18U
+#define ROUTE_COUNT         20U
 typedef struct { int16_t x, y; const char *event; int8_t heading; } RoutePoint;
 /* Task routes execute one signed map-axis distance per leg, in mm.
  * Heading 4 keeps the current heading; departure turns happen before travel. */
@@ -33,19 +35,21 @@ typedef struct {
 } RouteLeg;
 static const RouteLeg routeDistanceZone1[ROUTE_COUNT] = {
     {0,-200,0,4,4}, {-1050,0,"QR",4,-1}, {830,0,0,0,1},
-    {0,-930,"RAW_1",4,1}, {0,-860,0,4,2},
-    {-1690,0,0,4,-1}, {0,860,"COARSE_1_DROP_PICK",4,-1},
+    {0,-900,"RAW_1",4,1}, {0,-830,0,4,2},
+    {-1720,0,0,4,-1}, {0,860,"COARSE_1_DROP_PICK",4,-1},
     {0,-860,0,4,2}, {850,0,"TEMP_1_DROP",4,2}, {880,0,0,4,1},
-    {0,850,"RAW_2",4,1}, {-1690,0,"COARSE_2_DROP_PICK",2,-1},
+    {0,850,"RAW_2",4,1}, {0,-830,0,4,2},
+    {-1720,0,0,4,-1}, {0,860,"COARSE_2_DROP_PICK",4,-1},
     {0,-860,0,4,2}, {850,0,"TEMP_2_STACK",4,2}, {880,0,0,4,-1},
     {0,1700,0,4,4}, {220,0,0,4,4}, {0,150,"HOME",4,4}
 };
 static const RouteLeg routeDistanceZone2[ROUTE_COUNT] = {
     {0,-150,0,4,4}, {1050,0,"QR",4,-1}, {825,0,0,0,1},
-    {0,-930,"RAW_1",4,1}, {0,-860,0,4,2},
-    {-1690,0,0,4,-1}, {0,860,"COARSE_1_DROP_PICK",4,-1},
+    {0,-900,"RAW_1",4,1}, {0,-830,0,4,2},
+    {-1720,0,0,4,-1}, {0,860,"COARSE_1_DROP_PICK",4,-1},
     {0,-860,0,4,2}, {850,0,"TEMP_1_DROP",4,2}, {890,0,0,4,1},
-    {0,850,"RAW_2",4,1}, {-1690,0,"COARSE_2_DROP_PICK",2,-1},
+    {0,850,"RAW_2",4,1}, {0,-830,0,4,2},
+    {-1720,0,0,4,-1}, {0,860,"COARSE_2_DROP_PICK",4,-1},
     {0,-860,0,4,2}, {850,0,"TEMP_2_STACK",4,2}, {-850,0,0,4,-1},
     {0,1700,0,4,4}, {-200,0,0,4,4}, {0,150,"HOME",4,4}
 };

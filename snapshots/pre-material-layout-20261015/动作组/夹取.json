@@ -1,0 +1,152 @@
+{
+    "initialState": {
+        "gripper": "open",
+        "gripperCloseDeg": 35,
+        "gripperDps10": 2700,
+        "gripperOpenDeg": 90,
+        "horizontalAccel": 50,
+        "horizontalDmm": 0,
+        "horizontalRpm": 1000,
+        "liftAccel": 200,
+        "liftDmm": 0,
+        "liftRpm": 1000,
+        "platform": 1,
+        "platformDeg": [
+            30,
+            150,
+            270
+        ],
+        "platformDps10": 1200,
+        "turretDdeg": 2720,
+        "turretDps10": 2200
+    },
+    "loopCount": 3,
+    "loopEnabled": false,
+    "name": "夹取",
+    "steps": [
+        {
+            "type": "platform",
+            "value": 1,
+            "waitMs": 0
+        },
+        {
+            "type": "gripper",
+            "value": 1,
+            "waitMs": 0
+        },
+        {
+            "pose": {
+                "horizontalAccel": 50,
+                "horizontalDmm": -200,
+                "horizontalRpm": 1000,
+                "liftAccel": 200,
+                "liftDmm": 500,
+                "liftRpm": 1000,
+                "turretDdeg": 2680,
+                "turretDps10": 2200
+            },
+            "type": "pose",
+            "waitMs": 0
+        },
+        {
+            "type": "gripper",
+            "value": 0,
+            "waitMs": 0
+        },
+        {
+            "pose": {
+                "horizontalAccel": 50,
+                "horizontalDmm": -200,
+                "horizontalRpm": 1000,
+                "liftAccel": 200,
+                "liftDmm": 0,
+                "liftRpm": 1000,
+                "turretDdeg": 2680,
+                "turretDps10": 2200
+            },
+            "type": "pose",
+            "waitMs": 0
+        },
+        {
+            "pose": {
+                "horizontalAccel": 50,
+                "horizontalDmm": -200,
+                "horizontalRpm": 1000,
+                "liftAccel": 200,
+                "liftDmm": 0,
+                "liftRpm": 1000,
+                "turretDdeg": 1320,
+                "turretDps10": 2200
+            },
+            "type": "pose",
+            "waitMs": 0
+        },
+        {
+            "pose": {
+                "horizontalAccel": 50,
+                "horizontalDmm": -500,
+                "horizontalRpm": 1000,
+                "liftAccel": 200,
+                "liftDmm": 0,
+                "liftRpm": 1000,
+                "turretDdeg": 1320,
+                "turretDps10": 2200
+            },
+            "type": "pose",
+            "waitMs": 0
+        },
+        {
+            "pose": {
+                "horizontalAccel": 50,
+                "horizontalDmm": -500,
+                "horizontalRpm": 1000,
+                "liftAccel": 200,
+                "liftDmm": 250,
+                "liftRpm": 1000,
+                "turretDdeg": 1320,
+                "turretDps10": 2200
+            },
+            "type": "pose",
+            "waitMs": 0
+        },
+        {
+            "type": "gripper",
+            "value": 1,
+            "waitMs": 0
+        },
+        {
+            "pose": {
+                "horizontalAccel": 50,
+                "horizontalDmm": -500,
+                "horizontalRpm": 1000,
+                "liftAccel": 200,
+                "liftDmm": 0,
+                "liftRpm": 1000,
+                "turretDdeg": 1320,
+                "turretDps10": 2200
+            },
+            "type": "pose",
+            "waitMs": 0
+        },
+        {
+            "type": "platform",
+            "value": 2,
+            "waitMs": 0
+        },
+        {
+            "pose": {
+                "horizontalAccel": 50,
+                "horizontalDmm": 0,
+                "horizontalRpm": 1000,
+                "liftAccel": 200,
+                "liftDmm": 0,
+                "liftRpm": 1000,
+                "turretDdeg": 2720,
+                "turretDps10": 2200
+            },
+            "type": "pose",
+            "waitMs": 0
+        }
+    ],
+    "version": 1
+}

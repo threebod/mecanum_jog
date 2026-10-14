@@ -1,0 +1,43 @@
+{
+    "version": 1,
+    "name": "01_首次取料拍照准备_65转272",
+    "loopEnabled": false,
+    "loopCount": 2,
+    "initialState": {
+        "gripper": "open",
+        "platform": 1,
+        "gripperOpenDeg": 70,
+        "gripperCloseDeg": 35,
+        "gripperDps10": 1800,
+        "platformDps10": 1800,
+        "platformDeg": [
+            26,
+            146,
+            264
+        ],
+        "horizontalDmm": 0,
+        "liftDmm": 0,
+        "turretDdeg": 650,
+        "horizontalRpm": 500,
+        "horizontalAccel": 200,
+        "liftRpm": 1000,
+        "liftAccel": 200,
+        "turretDps10": 1800
+    },
+    "steps": [
+        {
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -500,
+                "liftDmm": 0,
+                "turretDdeg": 2720,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            },
+            "waitMs": 0
+        }
+    ]
+}

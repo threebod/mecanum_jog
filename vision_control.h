@@ -254,6 +254,23 @@ static void vision_session_make_request(VisionSession *session,
     session->state = VISION_STATE_WAIT;
 }
 
+static uint8_t vision_session_start_material_sample(VisionSession *session,
+                                                    const VisionCalibration *calibration,
+                                                    uint8_t color, uint16_t sampleId,
+                                                    uint32_t now)
+{
+    VisionCalibration sampling;
+    if (calibration == 0 || calibration->roi[2] <= 0 || calibration->roi[3] <= 0 ||
+        color < 1U || color > 6U || sampleId == 0U) return 0U;
+    sampling = *calibration;
+    sampling.calibrated = 1U;
+    if (!vision_session_start(session, VISION_MODE_MATERIAL, color, 0U,
+                              &sampling, now)) return 0U;
+    session->sampleOnly = 1U;
+    session->sampleId = sampleId;
+    return 1U;
+}
+
 /* Calibration sampling never uses the existing pixel-to-movement matrix. */
 static uint8_t vision_session_start_sample(VisionSession *session,
                                            const VisionCalibration *calibration,
@@ -355,10 +372,10 @@ static VisionEvent vision_session_observe(VisionSession *session,
     if (session->sampleOnly) {
         if ((packet->flags & (VISION_FLAG_VALID | VISION_FLAG_STABLE)) !=
                 (VISION_FLAG_VALID | VISION_FLAG_STABLE) ||
-            !vision_quality_valid(packet)) {
-            session->state = VISION_STATE_FAILED;
-            session->fault = "SAMPLE_UNCONFIRMED";
-            return VISION_EVENT_FAILED;
+            !vision_quality_valid(packet) ||
+            (session->mode == VISION_MODE_MATERIAL &&
+             !vision_material_allowed(session, packet))) {
+            return vision_session_miss(session, "SAMPLE_UNCONFIRMED");
         }
         session->state = VISION_STATE_IDLE;
         return VISION_EVENT_SAMPLED;
@@ -385,6 +402,10 @@ static VisionEvent vision_session_observe(VisionSession *session,
     du = (int16_t)(packet->value[0] - calibration->anchorU);
     dv = (int16_t)(packet->value[1] - calibration->anchorV);
     vision_map_error(calibration, du, dv, &forward, &right);
+    if (session->mode == VISION_MODE_MATERIAL && session->pickupMode != 0U) {
+        /* Pickup depth is applied to the horizontal axis at grasp time. */
+        right = 0.0f;
+    }
     session->forwardMm = forward;
     session->rightMm = right;
     absForward = forward < 0.0f ? -forward : forward;
@@ -394,7 +415,7 @@ static VisionEvent vision_session_observe(VisionSession *session,
         aligned = (uint8_t)(du >= -2 && du <= 2 && dv >= -2 && dv <= 2);
     }
     if (session->mode == VISION_MODE_MATERIAL && session->pickupMode != 0U) {
-        aligned = (uint8_t)(du >= -14 && du <= 14 && dv >= -14 && dv <= 14);
+        aligned = (uint8_t)(du >= -14 && du <= 14);
     }
     if (aligned) {
         if (++session->confirmations >= (session->pickupMode != 0U ? 1U : 2U)) {

@@ -13,11 +13,11 @@ int main(void)
     int16_t forward, right;
     int8_t heading;
     assert(routeDistanceLeg(0U, 1U).rightMm == -200);
-    assert(routeDistanceLeg(3U, 1U).rightMm == -930);
+    assert(routeDistanceLeg(3U, 1U).rightMm == -900);
     assert(routeDistanceLeg(0U, 2U).rightMm == -150);
-    assert(routeDistanceLeg(3U, 2U).rightMm == -930);
+    assert(routeDistanceLeg(3U, 2U).rightMm == -900);
     assert(routeDistanceLeg(0U, 1U).rightMm +
-           routeDistanceLeg(3U, 1U).rightMm == -1130);
+           routeDistanceLeg(3U, 1U).rightMm == -1100);
     assert(routeDistanceLeg(2U, 1U).upMm == 830);
     assert(routeDistanceLeg(2U, 2U).upMm == 825);
     assert(routeDistanceLeg(9U, 1U).upMm == 880);
@@ -31,18 +31,17 @@ int main(void)
             if (leg.event) ++events;
             if (leg.departureHeading != 4) heading = leg.departureHeading;
             if (i == 2U) assert(heading == 0 && leg.departureHeading == 0 && leg.heading == 1);
-            if (i == 4U) assert(heading == 1 && leg.rightMm == -860 && leg.heading == 2 && !leg.event);
-            if (i == 5U) assert(heading == 2 && leg.upMm == -1690 && leg.heading == -1 && !leg.event);
-            if (i == 6U) assert(heading == -1 && leg.rightMm == 860 && leg.heading == -1 && leg.event);
-            if (i == 11U) assert(heading == 2 && leg.upMm == -1690);
-            if (i == 8U || i == 13U) assert(heading == 2 && leg.upMm == 850);
+            if (i == 4U || i == 11U) assert(heading == 1 && leg.rightMm == -830 && leg.heading == 2 && !leg.event);
+            if (i == 5U || i == 12U) assert(heading == 2 && leg.upMm == -1720 && leg.heading == -1 && !leg.event);
+            if (i == 6U || i == 13U) assert(heading == -1 && leg.rightMm == 860 && leg.heading == -1 && leg.event);
+            if (i == 8U || i == 15U) assert(heading == 2 && leg.upMm == 850);
             if (i == 10U) assert(heading == 1 && leg.rightMm == 850);
-            if (i == 14U) assert(heading == 2 && leg.heading == -1 &&
+            if (i == 16U) assert(heading == 2 && leg.heading == -1 &&
                                 leg.upMm == (start == 1 ? 880 : -850));
-            if (i >= 15U) assert(heading == -1 && leg.heading == 4);
-            if (i == 15U) assert(leg.rightMm == 1700);
-            if (i == 16U) assert(leg.upMm == (start == 1 ? 220 : -200));
-            if (i == 17U) assert(leg.rightMm == 150);
+            if (i >= 17U) assert(heading == -1 && leg.heading == 4);
+            if (i == 17U) assert(leg.rightMm == 1700);
+            if (i == 18U) assert(leg.upMm == (start == 1 ? 220 : -200));
+            if (i == 19U) assert(leg.rightMm == 150);
             if (leg.heading != 4) heading = leg.heading;
         }
         assert(events == 8);
@@ -60,7 +59,11 @@ int main(void)
     assert(routeWheel(2,0,0,5,1000) == -5);
     assert(routeWheel(3,0,0,5,1000) == -5);
     assert(routeWheel(4,0,0,5,1000) == 5);
-    assert(routeAbs(routeEstimate(60,1000,0)-314.159265f) < 0.001f);
+    /* One revolution is 3200 / 9.9 mm after the verified line calibration. */
+    assert(routeAbs(routeEstimate(60,1000,0)-323.232323f) < 0.02f);
+    assert(routeAbs(routeEstimate(-60,1000,0)+323.232323f) < 0.02f);
+    assert((uint32_t)(500.0f / ROUTE_FORWARD_SCALE *
+                     3200.0f / ROUTE_MM_PER_REV + 0.5f) == 4950U);
     assert(routeAbs(routeEstimate(-60,1000,1)+
                     314.159265f*ROUTE_LATERAL_SCALE) < 0.001f);
     assert(routeAbs(routeEstimateScaled(-60,1000,0.925f)+

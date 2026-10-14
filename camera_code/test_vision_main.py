@@ -12,10 +12,23 @@ from vision_protocol import FLAG_RING_NO_DIGIT, KIND_REQUEST, MODE_MATERIAL, MOD
 
 class VisionMainTest(unittest.TestCase):
     def run_camera(self, incoming, times, confirmations=None, write_error=None,
-                   found=None, frames=None):
+                   found=None, frames=None, camera_contrast=50, contrast_read_loss=0):
         maix = types.ModuleType("maix")
-        for name in ("app", "camera", "display", "err", "pwm", "image", "pinmap", "uart"):
+        for name in ("app", "camera", "display", "err", "gpio", "image", "pinmap", "uart"):
             setattr(maix, name, Mock())
+
+        def set_pin_function(pin, function):
+            if pin == "B25" and function not in ("GPIOB25", "PWM6"):
+                raise ValueError("func {} for pin B25 not valid".format(function))
+            return 0
+
+        def open_gpio(name, mode):
+            if name != "GPIOB25":
+                raise ValueError("invalid illumination GPIO name: {}".format(name))
+            return maix.gpio.GPIO.return_value
+
+        maix.pinmap.set_pin_function.side_effect = set_pin_function
+        maix.gpio.GPIO.side_effect = open_gpio
         clock = iter(times)
         current_time = [0]
 
@@ -27,6 +40,14 @@ class VisionMainTest(unittest.TestCase):
                 return True
 
         maix.app.need_exit.side_effect = need_exit
+        current_contrast = [camera_contrast]
+
+        def constrast(value=-1):
+            if value >= 0:
+                current_contrast[0] = value
+            return current_contrast[0] - contrast_read_loss
+
+        maix.camera.Camera.return_value.constrast.side_effect = constrast
         if frames is not None:
             maix.camera.Camera.return_value.read.side_effect = frames
         serial = maix.uart.UART.return_value
@@ -38,6 +59,8 @@ class VisionMainTest(unittest.TestCase):
         with patch.dict(sys.modules, {"maix": maix}):
             spec.loader.exec_module(entry)
         stable = Mock()
+        stable.samples = []
+        stable.started_ms = None
         stable.update.side_effect = confirmations
         stable.center.return_value = [164, 121]
         window_patch = (patch.object(entry, "StableWindow", wraps=entry.StableWindow)
@@ -90,23 +113,86 @@ class VisionMainTest(unittest.TestCase):
                           "trend_tolerance": None},
                          self.window_calls[-1].kwargs)
 
-    def test_ring_stays_on_after_result_and_timeout_until_material_request(self):
+    def test_ring_contrast_persists_after_result_and_timeout_then_restores(self):
         maix = self.run_camera(
             [self.request(MODE_RING, 1), b"", self.request(MODE_RING, 2),
              b"", self.request(MODE_MATERIAL, 3), b""],
             [0, 0.1, 0.2, 1.3, 1.4, 1.5],
             [True, False, False, True])
-        self.assertEqual([10, 0, 0],
-                         [call.args[0] for call in maix.pwm.PWM.return_value.duty.call_args_list])
+        self.assertEqual([call(0), call(0)],
+                         maix.gpio.GPIO.return_value.value.call_args_list)
+        maix.gpio.GPIO.assert_called_once_with("GPIOB25", maix.gpio.Mode.OUT)
+        maix.pinmap.set_pin_function.assert_any_call("B25", "GPIOB25")
+        self.assertEqual([call(), call(80), call(50)],
+                         maix.camera.Camera.return_value.constrast.call_args_list)
         self.assertEqual(3, maix.uart.UART.return_value.write.call_count)
         maix.uart.UART.return_value.close.assert_called_once()
 
     def test_exception_turns_off_ring_light(self):
         maix = self.run_camera([self.request(MODE_RING, 1)], [0], [True],
                                RuntimeError("UART failure"))
-        self.assertEqual([10, 0],
-                         [call.args[0] for call in maix.pwm.PWM.return_value.duty.call_args_list])
+        self.assertEqual([call(0), call(0)],
+                         maix.gpio.GPIO.return_value.value.call_args_list)
         maix.uart.UART.return_value.close.assert_called_once()
+
+    def test_material_only_does_not_change_camera_contrast_or_enable_light(self):
+        maix = self.run_camera([self.request(MODE_MATERIAL, 1)], [0], [False])
+        maix.camera.Camera.return_value.constrast.assert_not_called()
+        maix.gpio.GPIO.assert_called_once_with("GPIOB25", maix.gpio.Mode.OUT)
+        self.assertEqual([call(0), call(0)],
+                         maix.gpio.GPIO.return_value.value.call_args_list)
+
+    def test_material_contrast_does_not_drift_when_reentering_ring_mode(self):
+        maix = self.run_camera(
+            [self.request(MODE_RING, 1), self.request(MODE_MATERIAL, 2),
+             self.request(MODE_RING, 3), self.request(MODE_MATERIAL, 4)],
+            [0, 0.1, 0.2, 0.3], camera_contrast=50, contrast_read_loss=1)
+        self.assertEqual([call(), call(80), call(49), call(80), call(49)],
+                         maix.camera.Camera.return_value.constrast.call_args_list)
+
+    def test_second_round_material_fallback_reuses_first_material_contrast(self):
+        stack_request = encode(KIND_REQUEST, 3, MODE_RING, 5, 2, FLAG_RING_NO_DIGIT,
+                               [0, 0, 320, 240, 160, 120, 0, 0])
+        maix = self.run_camera(
+            [self.request(MODE_RING, 1, 2, 0), self.request(MODE_MATERIAL, 2, 0, 5),
+             stack_request, self.request(MODE_MATERIAL, 4, 2, 5)],
+            [0, 0.1, 0.2, 0.3], camera_contrast=50, contrast_read_loss=1)
+        self.assertEqual([call(), call(80), call(49), call(49), call(49)],
+                         maix.camera.Camera.return_value.constrast.call_args_list)
+        self.assertEqual({"count": 5, "tolerance": 2, "minimum_ms": 500,
+                          "trend_tolerance": None}, self.window_calls[-1].kwargs)
+
+    def test_stack_ring_uses_material_contrast_before_capture_and_returns_valid_result(self):
+        request = encode(KIND_REQUEST, 9, MODE_RING, 5, 2, FLAG_RING_NO_DIGIT,
+                         [0, 0, 320, 240, 160, 120, 0, 0])
+        maix = self.run_camera([request] + [b""] * 5,
+                               [0, 0.05, 0.1, 0.2, 0.3, 0.4],
+                               found=(160, 120, 80, 80, 80), camera_contrast=37)
+        cam = maix.camera.Camera.return_value
+        self.assertEqual([call(), call(37)], cam.constrast.call_args_list)
+        self.assertEqual([call.constrast(), call.set_resolution(640, 480),
+                          call.constrast(37), call.read()], cam.mock_calls[:4])
+        packet = Parser().feed(maix.uart.UART.return_value.write.call_args.args[0])[0]
+        self.assertEqual(3, packet["flags"])
+        self.assertEqual(5, packet["selector"])
+        self.assertEqual([160, 120], packet["values"][:2])
+
+    def test_ring_variant_switches_contrast_without_reopening_resolution(self):
+        for first_flags in (0, FLAG_RING_NO_DIGIT):
+            with self.subTest(first_flags=first_flags):
+                other_flags = first_flags ^ FLAG_RING_NO_DIGIT
+                packets = [encode(KIND_REQUEST, token, MODE_RING, 5, 2, flags,
+                                  [0, 0, 320, 240, 160, 120, 0, 0])
+                           for token, flags in enumerate(
+                               (first_flags, other_flags, other_flags, first_flags), 1)]
+                packets.append(self.request(MODE_MATERIAL, 5, 2, 5))
+                maix = self.run_camera(packets, [0, 0.1, 0.2, 0.3, 0.4], camera_contrast=37)
+                cam = maix.camera.Camera.return_value
+                first, other = (37, 80) if first_flags else (80, 37)
+                self.assertEqual([call(), call(first), call(other), call(first), call(37)],
+                                 cam.constrast.call_args_list)
+                self.assertEqual([call(640, 480), call(320, 240)],
+                                 cam.set_resolution.call_args_list)
 
     def test_ring_resolution_switch_preserves_protocol_and_scales_overlay(self):
         maix = self.run_camera(
@@ -116,6 +202,11 @@ class VisionMainTest(unittest.TestCase):
         cam = maix.camera.Camera.return_value
         self.assertEqual([call(640, 480), call(320, 240)],
                          cam.set_resolution.call_args_list)
+        self.assertEqual([call.constrast(), call.set_resolution(640, 480),
+                          call.constrast(80), call.set_resolution(320, 240),
+                          call.constrast(50)],
+                         [item for item in cam.mock_calls
+                          if item[0] in ("constrast", "set_resolution")])
         response = maix.uart.UART.return_value.write.call_args.args[0]
         self.assertEqual([168, 124, 80, 50, 50, 0, 0, 0],
                          Parser().feed(response)[0]["values"])
@@ -222,13 +313,59 @@ class VisionMainTest(unittest.TestCase):
                 self.assertEqual(1, maix.uart.UART.return_value.write.call_count)
                 self.assertTrue(any("elapsed=210ms" in line for line in self.logs))
 
-    def test_ring_still_requires_elapsed_time_and_five_frames(self):
-        maix = self.run_camera([self.request(MODE_RING, 9, 2, 0)] + [b""] * 6,
-                               [index * 0.01 for index in range(7)],
-                               found=(160, 120, 80, 50, 50))
-        maix.uart.UART.return_value.write.assert_not_called()
+    def test_ring_accepts_three_stable_frames_but_not_two(self):
+        for flags, selector in [(0, 0), (FLAG_RING_NO_DIGIT, 5)]:
+            for count in (2, 3):
+                with self.subTest(flags=flags, count=count):
+                    request = encode(KIND_REQUEST, 9, MODE_RING, selector, 2, flags,
+                                     [0, 0, 320, 240, 160, 120, 0, 0])
+                    times = [0, 0.05] + [0.1, 0.3, 0.5, 0.7][:count]
+                    maix = self.run_camera([request] + [b""] * (len(times) - 1), times,
+                                           found=(160, 120, 80, 50, 50))
+                    if count == 2:
+                        maix.uart.UART.return_value.write.assert_not_called()
+                    else:
+                        response = maix.uart.UART.return_value.write.call_args.args[0]
+                        self.assertEqual(3, Parser().feed(response)[0]["flags"])
+                    self.assertEqual({"count": 3, "tolerance": 2, "minimum_ms": 180,
+                                      "trend_tolerance": None}, self.window_calls[-1].kwargs)
 
-    def test_stack_ring_timeout_then_material_request_changes_resolution_and_light(self):
+    def test_three_ring_frames_still_require_180ms(self):
+        for final_time, accepted in [(0.279, False), (0.280, True)]:
+            with self.subTest(final_time=final_time):
+                maix = self.run_camera(
+                    [self.request(MODE_RING, 9, 2, 0)] + [b""] * 4,
+                    [0, 0.05, 0.1, 0.2, final_time],
+                    found=(160, 120, 80, 50, 50))
+                self.assertEqual(int(accepted), maix.uart.UART.return_value.write.call_count)
+
+    def test_ring_loss_or_jitter_restarts_three_frame_window(self):
+        point = (160, 120, 80, 50, 50)
+        shifted = (163, 120, 80, 50, 50)
+        for interruption, final_point in [(None, point), (shifted, shifted)]:
+            with self.subTest(interruption=interruption):
+                found = [point] * 2 + [interruption] + [final_point] * 3
+                maix = self.run_camera(
+                    [self.request(MODE_RING, 9, 2, 0)] + [b""] * 7,
+                    [0, 0.05] + [index * 0.1 for index in range(1, 7)], found=found)
+                maix.uart.UART.return_value.write.assert_called_once()
+                packet = Parser().feed(maix.uart.UART.return_value.write.call_args.args[0])[0]
+                self.assertEqual(3, packet["flags"])
+                self.assertEqual(list(final_point[:2]), packet["values"][:2])
+                elapsed_ms = 600 if interruption is None else 500
+                self.assertTrue(any("window=3" in line and "elapsed_ms={}".format(elapsed_ms) in line
+                                    for line in self.logs))
+
+    def test_three_stable_ring_frames_confirm_on_timeout_iteration(self):
+        maix = self.run_camera([self.request(MODE_RING, 9, 2, 0)] + [b""] * 4,
+                               [0, 0.05, 0.12, 0.45, 1.1],
+                               found=(152, 122, 80, 80, 80))
+        maix.uart.UART.return_value.write.assert_called_once()
+        packet = Parser().feed(maix.uart.UART.return_value.write.call_args.args[0])[0]
+        self.assertEqual(3, packet["flags"])
+        self.assertEqual([152, 122], packet["values"][:2])
+
+    def test_stack_ring_timeout_then_material_restores_resolution_and_contrast(self):
         ring_request = encode(KIND_REQUEST, 9, MODE_RING, 5, 2, FLAG_RING_NO_DIGIT,
                               [0, 0, 320, 240, 160, 120, 0, 0])
         maix = self.run_camera(
@@ -243,8 +380,10 @@ class VisionMainTest(unittest.TestCase):
         self.assertEqual([5, 5], [packet["selector"] for packet in packets])
         self.assertEqual([call(640, 480), call(320, 240)],
                          maix.camera.Camera.return_value.set_resolution.call_args_list)
-        self.assertEqual([10, 0, 0],
-                         [call.args[0] for call in maix.pwm.PWM.return_value.duty.call_args_list])
+        self.assertEqual([call(0), call(0)],
+                         maix.gpio.GPIO.return_value.value.call_args_list)
+        self.assertEqual([call(), call(50), call(50)],
+                         maix.camera.Camera.return_value.constrast.call_args_list)
 
 
 if __name__ == "__main__":

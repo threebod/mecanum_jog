@@ -109,7 +109,7 @@ static uint8_t auxMoveMotorId;
 static int8_t routeHeading,routeNextHeading,yawSign=1;
 static float routeX,routeY,routeYaw,routeBaseYaw,imuYaw,routeLegProgress;
 static float routeDriveRpm,routeTurnRpm,routeCorrection;
-static int16_t routeFirstLeftCorrection;
+static int16_t routeRawLeftCorrection;
 static uint32_t headingPidLastReport;
 static RouteHeadingPid routeHeadingPid;
 static RouteTurnPid routeTurnPid;
@@ -170,8 +170,8 @@ static uint8_t vision_session_start(VisionSession *session,uint8_t mode,
     if(mode==VISION_MODE_RING) {
         assert(target==2 && cal==&visionRingCalibration[1]);
         assert(mechanismState.current.horizontalDmm==-770);
-        assert(missionPhase!=MISSION_TEMP_ALIGN || routeIndex==9 || routeIndex==14);
-        if(missionPhase==MISSION_TEMP_ALIGN && routeIndex==14) {
+        assert(missionPhase!=MISSION_TEMP_ALIGN || routeIndex==9 || routeIndex==16);
+        if(missionPhase==MISSION_TEMP_ALIGN && routeIndex==16) {
             unsigned item=0;
             while(missionTask.rings[0][item]!=2) ++item;
             assert(selector==missionTask.colors[0][item]);
@@ -180,7 +180,7 @@ static uint8_t vision_session_start(VisionSession *session,uint8_t mode,
         unsigned item=0;
         while(missionTask.rings[0][item]!=2) ++item;
         assert(mode==VISION_MODE_MATERIAL && selector==missionTask.colors[0][item] && target==2);
-        assert(missionPhase==MISSION_TEMP_ALIGN && routeIndex==14);
+        assert(missionPhase==MISSION_TEMP_ALIGN && routeIndex==16);
         assert(cal==&visionRingCalibration[1]);
         assert(mechanismState.current.horizontalDmm==-770);
         ++missionMaterialAligns;
@@ -236,13 +236,13 @@ uint8_t mechanismActionStart(const MechanismInitialState *initial,
             unsigned platform=item==0 ? 0 : item==1 ? 10 : 20;
             unsigned release=item==0 ? 8 : item==1 ? 17 : 29;
             assert(actions[platform].value==item+1);
-            assert(actions[release].pose.turretDdeg==angle[missionTask.rings[routeIndex==12][item]-1]);
-            assert(actions[release].pose.horizontalDmm==horizontal[missionTask.rings[routeIndex==12][item]-1]);
+            assert(actions[release].pose.turretDdeg==angle[missionTask.rings[routeIndex==14][item]-1]);
+            assert(actions[release].pose.horizontalDmm==horizontal[missionTask.rings[routeIndex==14][item]-1]);
         }
         ++missionPlaceRuns;
     } else if(actions==missionPickBackActions) {
         assert(initial==&missionCoarseInitial && count==MISSION_PICK_BACK_COUNT);
-        unsigned ring=missionTask.rings[routeIndex==12][2]-1;
+        unsigned ring=missionTask.rings[routeIndex==14][2]-1;
         static const int16_t ringH[3]={55,-240,435};
         static const uint16_t ringT[3]={3065,2657,2320};
         assert(mechanismState.current.horizontalDmm==ringH[ring] &&
@@ -253,7 +253,7 @@ uint8_t mechanismActionStart(const MechanismInitialState *initial,
         assert(actions[0].pose.horizontalDmm==ringH[ring] && actions[0].pose.turretDdeg==ringT[ring]);
         for(unsigned i=0;i<3;++i) {
             unsigned base=1+i*11,retract=base+7;
-            ring=missionTask.rings[routeIndex==12][i]-1;
+            ring=missionTask.rings[routeIndex==14][i]-1;
             assert(actions[base].value==i+1);
             assert(actions[base+1].type==MECHANISM_ACTION_GRIPPER && actions[base+1].value==1);
             assert(actions[base+2].pose.liftDmm==0);
@@ -261,11 +261,11 @@ uint8_t mechanismActionStart(const MechanismInitialState *initial,
                    actions[base+3].pose.turretDdeg==ringT[ring] && actions[base+3].pose.liftDmm==1300);
             assert(actions[base+4].type==MECHANISM_ACTION_GRIPPER && actions[base+4].value==0);
             assert(actions[base+6].pose.horizontalDmm==ringH[ring] && actions[base+6].pose.turretDdeg==1320);
-            assert(actions[retract].pose.horizontalDmm==(routeIndex==12 ? -470 : -450));
-            assert(actions[retract+1].pose.horizontalDmm==(routeIndex==12 ? -470 : -450));
+            assert(actions[retract].pose.horizontalDmm==(routeIndex==14 ? -470 : -450));
+            assert(actions[retract+1].pose.horizontalDmm==(routeIndex==14 ? -470 : -450));
             assert(actions[retract+1].pose.liftDmm==300);
             assert(actions[retract+2].type==MECHANISM_ACTION_GRIPPER && actions[retract+2].value==1);
-            assert(actions[retract+3].pose.horizontalDmm==(routeIndex==12 ? -470 : -450));
+            assert(actions[retract+3].pose.horizontalDmm==(routeIndex==14 ? -470 : -450));
         }
         ++missionPickRuns;
     }
@@ -277,7 +277,7 @@ uint8_t mechanismActionStart(const MechanismInitialState *initial,
         for(unsigned item=0;item<3;++item) {
             unsigned release=item==0 ? 8 : item==1 ? 17 : 29;
             unsigned platform=item==0 ? 0 : item==1 ? 10 : 20;
-            unsigned batch=routeIndex==14;
+            unsigned batch=routeIndex==16;
             unsigned baseSlot=0;
             while(missionTask.colors[0][baseSlot]!=missionTask.colors[batch][item]) ++baseSlot;
             assert(actions[platform].value==item+1);
@@ -480,7 +480,7 @@ static float firstRawUpTravel;
 static unsigned firstRawTurnTicks;
 static unsigned firstRawDepartureTurnTicks;
 static float homeVerticalTravel,homeHorizontalTravel,homeTailVerticalTravel,homeTailRightTravel;
-static float firstCoarseLeftTravel,firstCoarseRightTravel;
+static float coarseLeftTravel[2],coarseRightTravel[2];
 static void tick(void) {
     /* Ideal plant: (L+W)/2 = 215mm, wheel diameter100mm. */
     imuYaw += commandTurn * 1.3955f * 0.020f * yawSign;
@@ -493,13 +493,13 @@ static void tick(void) {
     float staleY = 9000.0f + clockMs % 1000;
     if(distanceRoute) {
         static const int16_t distances[2][ROUTE_COUNT] = {
-            {-200,-1050,830,-930,-860,-1690,860,-860,850,880,850,-1690,-860,850,880,1700,220,150},
-            {-150,1050,825,-930,-860,-1690,860,-860,850,890,850,-1690,-860,850,-850,1700,-200,150}
+            {-200,-1050,830,-900,-830,-1720,860,-860,850,880,850,-830,-1720,860,-860,850,880,1700,220,150},
+            {-150,1050,825,-900,-830,-1720,860,-860,850,890,850,-830,-1720,860,-860,850,-850,1700,-200,150}
         };
-        static const uint8_t axes[ROUTE_COUNT] = {1,0,0,1,1,0,1,1,0,0,1,0,1,0,0,1,0,1};
+        static const uint8_t axes[ROUTE_COUNT] = {1,0,0,1,1,0,1,1,0,0,1,1,0,1,1,0,0,1,0,1};
         RouteLeg leg=activeDistanceLeg();
         int16_t length=distances[routeStartZone-1][routeIndex];
-        if(routeIndex==4) length+=routeFirstLeftCorrection;
+        if(routeIndex==4 || routeIndex==11) length+=routeRawLeftCorrection;
         assert(leg.upMm==(axes[routeIndex] ? 0 : length));
         assert(leg.rightMm==(axes[routeIndex] ? length : 0));
         /* Corrupt global coordinates on every tick: distance routes must ignore them. */
@@ -517,8 +517,8 @@ static void tick(void) {
                 }
             }
             if(routeIndex==9) {assert(routeNextHeading==1);++rawReturnTurnTicks;}
-            if(routeIndex==7 || routeIndex==12) assert(routeNextHeading==2);
-            if(routeIndex==14) assert(routeNextHeading==-1);
+            if(routeIndex==7 || routeIndex==14) assert(routeNextHeading==2);
+            if(routeIndex==16) assert(routeNextHeading==-1);
         } else {
             int16_t forward,right;
             float travel=routeAbs(routeEstimateScaled(axes[routeIndex] ? routeRight : routeForward,20,
@@ -528,26 +528,26 @@ static void tick(void) {
             assert(axes[routeIndex] ? routeForward==0 : routeRight==0);
             assert((axes[routeIndex] ? routeRight : routeForward)*length>=0);
             routeBody(routeForward,routeRight,routeHeading,&forward,&right);
-            if(routeIndex==4) {
+            if(routeIndex==4 || routeIndex==11) {
                 if(travel>0) assert(routeHeading==1 && forward>0 && right==0);
-                firstCoarseLeftTravel+=travel;
+                coarseLeftTravel[routeIndex==11]+=travel;
             }
-            if(routeIndex==6) {
+            if(routeIndex==6 || routeIndex==13) {
                 if(travel>0) assert(routeHeading==-1 && forward>0 && right==0);
-                firstCoarseRightTravel+=travel;
+                coarseRightTravel[routeIndex==13]+=travel;
             }
-            if(routeIndex==5 || routeIndex==11) {
+            if(routeIndex==5 || routeIndex==12) {
                 if(travel>0) assert(routeHeading==2 && forward>0 && right==0);
-                coarseApproachTravel[routeIndex==11]+=travel;
+                coarseApproachTravel[routeIndex==12]+=travel;
             }
-            if(routeIndex==7 || routeIndex==12) {
+            if(routeIndex==7 || routeIndex==14) {
                 if(travel>0) assert(routeHeading==-1);
-                temporaryLeftTravel[routeIndex==12]+=travel;
+                temporaryLeftTravel[routeIndex==14]+=travel;
             }
-            if(routeIndex==8 || routeIndex==13) {
+            if(routeIndex==8 || routeIndex==15) {
                 assert(routeHeading==2);
                 if(travel>0) assert(forward<0 && right==0);
-                temporaryApproachTravel[routeIndex==13]+=travel;
+                temporaryApproachTravel[routeIndex==15]+=travel;
             }
             if(routeIndex==2) {
                 if(travel>0) assert(routeHeading==0 && forward>0 && right==0);
@@ -562,18 +562,18 @@ static void tick(void) {
                 assert(routeHeading==1 && forward<=0 && right==0);
                 secondRawRightTravel+=travel;
             }
-            if(routeIndex==14) {
+            if(routeIndex==16) {
                 if(travel>0) assert(routeHeading==2);
                 homeVerticalTravel+=travel;
             }
-            if(routeIndex>=15) {
+            if(routeIndex>=17) {
                 assert(routeHeading==-1);
                 if(travel>0) {
-                    if(routeIndex==16) assert(forward==0 && right*length<0);
+                    if(routeIndex==18) assert(forward==0 && right*length<0);
                     else assert(forward>0 && right==0);
                 }
-                if(routeIndex==15) homeHorizontalTravel+=travel;
-                else if(routeIndex==16) homeTailVerticalTravel+=travel;
+                if(routeIndex==17) homeHorizontalTravel+=travel;
+                else if(routeIndex==18) homeTailVerticalTravel+=travel;
                 else homeTailRightTravel+=travel;
             }
         }
@@ -584,7 +584,7 @@ static void tick(void) {
         if(routeIndex!=previousIndex) assert(routeLegProgress==0);
         else if(routeWaiting) assert(routeLegProgress==previousProgress);
     }
-    if(!navRunning && routeWaiting && (routeIndex==7 || routeIndex==12))
+    if(!navRunning && routeWaiting && (routeIndex==7 || routeIndex==14))
         assert(routeHeading==-1);
     if(missionActive && routeWaiting) {
         if((missionPhase==MISSION_RING_ALIGN || missionPhase==MISSION_TEMP_ALIGN) && missionActionStarted==1 &&
@@ -596,7 +596,7 @@ static void tick(void) {
            clockMs%200==0) {
             if(rawPickItemIndex==0)
                 assert(rawPickCollectedMask==0 && rawPickCurrentColor==0 && rawPickCurrentSlot==0);
-            if(routeIndex==4 && rawPickItemIndex==0) {
+            if((routeIndex==4 || routeIndex==11) && rawPickItemIndex==0) {
                 missionOffsetForward=45;missionOffsetRight=-30;
             }
             ++rawPickItemIndex;++missionRawItems;
@@ -604,7 +604,7 @@ static void tick(void) {
         }
         if((missionPhase==MISSION_RING_ALIGN || missionPhase==MISSION_TEMP_ALIGN) && missionActionStarted==2) {
             assert(visionSession.waitForTarget);
-            assert(visionSession.requestFlags==((missionPhase==MISSION_TEMP_ALIGN && routeIndex==14) ?
+            assert(visionSession.requestFlags==((missionPhase==MISSION_TEMP_ALIGN && routeIndex==16) ?
                                                VISION_FLAG_RING_NO_DIGIT : 0));
             assert(visionCalibration()==&visionRingCalibration[1]);
             missionOffsetForward=45;missionOffsetRight=-30;
@@ -664,7 +664,7 @@ static void checkStationHeadingAlignment(void) {
     unsigned zone,station,n;
     int sign;
     for(zone=1;zone<=2;++zone) for(sign=-1;sign<=1;sign+=2)
-        for(station=8;station<=13;station+=5) {
+        for(station=8;station<=15;station+=7) {
             char command[32];
             stopAllMotors();imuValid=1;imuYaw=zone==1 ? -1.0f : 179.0f;
             imuStamp=clockMs;yawSign=(int8_t)sign;armed=1;
@@ -715,7 +715,7 @@ static void checkStationHeadingAlignment(void) {
     /* HOME keeps the previous target heading rather than treating KEEP as 360deg. */
     imuYaw=0;imuStamp=clockMs;armed=1;
     assert(processRouteCommand("route auto 1 60") && routeActive);
-    routeIndex=17;routeLegProgress=150;routeHeading=routeNextHeading=-1;
+    routeIndex=19;routeLegProgress=150;routeHeading=routeNextHeading=-1;
     routeYaw=imuYaw=-90;
     clockMs+=20;imuStamp=clockMs;serviceRoute();
     assert(routeRotating && routeNextHeading==-1 && routeYaw==-90);
@@ -735,8 +735,8 @@ int main(void) {
     routeActive=0;
     /* A second batch without matching first-layer colors cannot start stacking. */
     assert(missionTaskParse("123+321+456+312",&missionTask));
-    routeActive=missionActive=routeWaiting=1;routeIndex=14;
-    missionBeginStation(14);
+    routeActive=missionActive=routeWaiting=1;routeIndex=16;
+    missionBeginStation(16);
     assert(!routeActive && !missionActive && !mechanismActionActive && !mechanismState.running);
     missionTask=savedTask;missionTaskValid=1;
 
@@ -821,7 +821,7 @@ int main(void) {
         temporaryLeftTravel[0]=temporaryLeftTravel[1]=0;
         coarseApproachTravel[0]=coarseApproachTravel[1]=0;
         rawReturnTravel=secondRawRightTravel=0;
-        firstCoarseLeftTravel=firstCoarseRightTravel=0;
+        coarseLeftTravel[0]=coarseLeftTravel[1]=coarseRightTravel[0]=coarseRightTravel[1]=0;
         rawReturnTurnTicks=0;
         firstRawApproachTravel=firstRawUpTravel=0;
         firstRawTurnTicks=firstRawDepartureTurnTicks=0;
@@ -867,14 +867,16 @@ int main(void) {
         assert(temporaryLeftTravel[1]>858 && temporaryLeftTravel[1]<865);
         assert(temporaryApproachTravel[0]>848 && temporaryApproachTravel[0]<855);
         assert(temporaryApproachTravel[1]>848 && temporaryApproachTravel[1]<855);
-        assert(firstCoarseLeftTravel>813 && firstCoarseLeftTravel<820);
-        assert(firstCoarseRightTravel>858 && firstCoarseRightTravel<865);
-        assert(coarseApproachTravel[0]>1688 && coarseApproachTravel[0]<1695);
-        assert(coarseApproachTravel[1]>1688 && coarseApproachTravel[1]<1695);
+        assert(coarseLeftTravel[0]>783 && coarseLeftTravel[0]<790);
+        assert(coarseLeftTravel[1]>783 && coarseLeftTravel[1]<790);
+        assert(coarseRightTravel[0]>858 && coarseRightTravel[0]<865);
+        assert(coarseRightTravel[1]>858 && coarseRightTravel[1]<865);
+        assert(coarseApproachTravel[0]>1718 && coarseApproachTravel[0]<1725);
+        assert(coarseApproachTravel[1]>1718 && coarseApproachTravel[1]<1725);
         assert(rawReturnTravel>(start==1 ? 878 : 888) &&
                rawReturnTravel<(start==1 ? 885 : 895) && rawReturnTurnTicks>0);
         assert(secondRawRightTravel>848 && secondRawRightTravel<855);
-        assert(firstRawApproachTravel>928 && firstRawApproachTravel<935);
+        assert(firstRawApproachTravel>898 && firstRawApproachTravel<905);
         assert(firstRawUpTravel>(start==1 ? 828 : 823) &&
                firstRawUpTravel<(start==1 ? 835 : 830));
         assert(firstRawTurnTicks>0 && firstRawDepartureTurnTicks>0);
@@ -926,28 +928,29 @@ int main(void) {
         n=missionRawExitMoves;
         serviceMission();
         assert(routeWaiting && motionMode==4 && missionPhase==MISSION_RAW_EXIT);
-        assert(lastVisionForward==(start==1 ? 0 : -95) && lastVisionRight==30);
-        assert(missionOffsetForward==(start==1 ? 45 : -50) && missionOffsetRight==0);
-        if(start==1) assert(activeDistanceLeg().rightMm==-815);
+        assert(lastVisionForward==0 && lastVisionRight==30);
+        assert(missionOffsetForward==45 && missionOffsetRight==0);
+        assert(activeDistanceLeg().rightMm==-785);
         serviceMission();assert(routeWaiting && missionRawExitMoves==n+1);
         motionMode=0;serviceMission();
         assert(!routeWaiting && missionActive && motionMode==0);
         assert(missionRawExitMoves==n+1);
         assert(missionOffsetForward==0 && missionOffsetRight==0);
     }
-    /* First pickup: restore only map Y, then combine signed map X compensation with left travel. */
+    /* Both pickups restore map Y and merge signed map X compensation into left travel. */
     {
         static const float horizontalOffsets[]={-70,0,45};
         static const float verticalOffsets[]={-30,0,65};
-        unsigned x,y,zone;
-        for(zone=1;zone<=2;++zone) for(x=0;x<3;++x) for(y=0;y<3;++y) {
+        unsigned x,y,zone,round,base;
+        for(zone=1;zone<=2;++zone) for(round=0;round<2;++round) for(x=0;x<3;++x) for(y=0;y<3;++y) {
             stopAllMotors();armed=1;imuStamp=clockMs;
             mechanismState.valid=1;mechanismState.running=0;mechanismActionActive=0;
             mechanismState.current.horizontalDmm=0;mechanismState.current.liftDmm=0;
             mechanismState.current.turretDdeg=650;
             sprintf(cmd,"route mission %u 40",zone);
-            assert(processRouteCommand(cmd) && routeFirstLeftCorrection==0);
-            routeWaiting=1;routeIndex=4;routeHeading=1;
+            assert(processRouteCommand(cmd) && routeRawLeftCorrection==0);
+            base=round ? 11 : 4;
+            routeWaiting=1;routeIndex=(uint8_t)base;routeHeading=1;
             missionPhase=MISSION_RECENTER;
             mechanismState.valid=1;mechanismState.running=0;
             mechanismState.current.horizontalDmm=0;
@@ -957,8 +960,8 @@ int main(void) {
             missionOffsetRight=verticalOffsets[y];
             n=missionRawExitMoves;
             serviceMission();
-            assert(routeFirstLeftCorrection==horizontalOffsets[x]);
-            assert(activeDistanceLeg().rightMm==-860+horizontalOffsets[x]);
+            assert(routeRawLeftCorrection==horizontalOffsets[x]);
+            assert(activeDistanceLeg().rightMm==-830+horizontalOffsets[x]);
             if(verticalOffsets[y]!=0) {
                 assert(routeWaiting && motionMode==4 && missionPhase==MISSION_RAW_EXIT);
                 assert(lastVisionForward==0 && lastVisionRight==-verticalOffsets[y]);
@@ -967,47 +970,23 @@ int main(void) {
             }
             assert(!routeWaiting && missionActive && motionMode==0);
             assert(missionRawExitMoves==n+(verticalOffsets[y]!=0));
-            firstCoarseLeftTravel=firstCoarseRightTravel=0;
+            coarseLeftTravel[0]=coarseLeftTravel[1]=coarseRightTravel[0]=coarseRightTravel[1]=0;
             routeYaw=routeBaseYaw+90*yawSign;imuYaw=headingError(routeYaw,0);
-            for(n=0;n<10000 && routeIndex==4;++n) tick();
-            assert(routeIndex==5 && routeHeading==2 && !routeWaiting);
-            assert(firstCoarseLeftTravel>858-horizontalOffsets[x] &&
-                   firstCoarseLeftTravel<865-horizontalOffsets[x]);
-            for(n=0;n<10000 && routeIndex==5;++n) tick();
-            assert(routeIndex==6 && routeHeading==-1 && !routeWaiting);
-            for(n=0;n<10000 && routeIndex==6;++n) tick();
-            assert(routeIndex==7 && routeHeading==-1 && routeWaiting);
+            for(n=0;n<10000 && routeIndex==base;++n) tick();
+            assert(routeIndex==base+1 && routeHeading==2 && !routeWaiting);
+            assert(coarseLeftTravel[round]>828-horizontalOffsets[x] &&
+                   coarseLeftTravel[round]<835-horizontalOffsets[x]);
+            for(n=0;n<10000 && routeIndex==base+1;++n) tick();
+            assert(routeIndex==base+2 && routeHeading==-1 && !routeWaiting);
+            for(n=0;n<10000 && routeIndex==base+2;++n) tick();
+            assert(routeIndex==base+3 && routeHeading==-1 && routeWaiting);
             assert(missionPhase==MISSION_RING_ALIGN && missionPlaceRuns==2);
             mechanismState.running=0;
-            assert(firstCoarseRightTravel>858 && firstCoarseRightTravel<865);
+            assert(coarseRightTravel[round]>858 && coarseRightTravel[round]<865);
         }
     }
     stopAllMotors();armed=1;imuStamp=clockMs;
     assert(processRouteCommand("route mission 1 40") && missionActive);
-    /* Merge signed compensation with map-right 50 mm at each body heading. */
-    {
-        static const int8_t headings[4]={0,1,2,-1};
-        static const int16_t exitForward[4]={0,-50,0,50};
-        static const int16_t exitRight[4]={50,0,-50,0};
-        unsigned h,alreadyThere;
-        for(start=2;start<=2;++start) for(h=0;h<4;++h) for(alreadyThere=0;alreadyThere<2;++alreadyThere) {
-            routeWaiting=1;routeIndex=start==1 ? 4 : 11;routeHeading=headings[h];
-            missionPhase=MISSION_RECENTER;
-            missionOffsetForward=alreadyThere ? exitForward[h] : -70;
-            missionOffsetRight=alreadyThere ? exitRight[h] : 65;
-            n=missionRawExitMoves;
-            serviceMission();
-            if(!alreadyThere) {
-                assert(motionMode==4 && missionPhase==MISSION_RAW_EXIT);
-                assert(lastVisionForward==exitForward[h]+70 && lastVisionRight==exitRight[h]-65);
-                assert(missionOffsetForward==exitForward[h] && missionOffsetRight==exitRight[h]);
-                serviceMission();assert(missionRawExitMoves==n+1 && routeWaiting);
-                motionMode=0;serviceMission();
-            }
-            assert(!routeWaiting && missionActive && motionMode==0);
-            assert(missionRawExitMoves==n+(!alreadyThere));
-        }
-    }
     routeWaiting=1;missionPhase=MISSION_COARSE_PLACE;
     missionActionStarted=1;mechanismActionActive=0;
     mechanismActionCount=MISSION_PLACE_COUNT;mechanismActionIndex=0;
@@ -1144,11 +1123,11 @@ int main(void) {
     /* No repeated stop/restart as measurement oscillates around entry boundary. */
     armed=1;processRouteCommand("turn L 90");
     imuYaw=routeYaw-1.9f;clockMs+=20;imuStamp=clockMs;serviceRoute();
-    previous=(int16_t)batches;
+    unsigned previousBatches=batches;
     for(n=0;n<12 && routeActive;++n) {
         imuYaw=routeYaw-(n%2?1.9f:2.1f);clockMs+=20;imuStamp=clockMs;serviceRoute();
     }
-    assert(!routeActive && batches==(unsigned)previous);
+    assert(!routeActive && batches==previousBatches);
     for(sign=-1;sign<=1;sign+=2) for(start=0;start<2;++start) {
         float physicalYaw=179.0f, physicalTurn=0.0f, overshoot=0.0f;
         stopAllMotors();imuYaw=physicalYaw;imuStamp=clockMs;yawSign=(int8_t)sign;armed=1;

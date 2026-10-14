@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "../vision_control.h"
+#include "../vision_config.h"
 
 static int require(int condition, const char *message)
 {
@@ -16,6 +16,11 @@ static int require(int condition, const char *message)
 
 int main(void)
 {
+    if (!require(fabsf(visionRingCalibration[1].matrix[0] + 1.111f) < 0.00001f &&
+                 fabsf(visionRingCalibration[1].matrix[3] + 1.143f) < 0.00001f &&
+                 fabsf(visionMaterialCalibration.matrix[0] + 0.640f) < 0.00001f &&
+                 fabsf(visionMaterialCalibration.matrix[3] + 0.673f) < 0.00001f,
+                 "formal ring 2 defaults or independent material defaults were incorrect")) return 1;
     VisionPacket request;
     VisionPacket decoded;
     VisionParser parser;
@@ -407,16 +412,18 @@ int main(void)
                 decoded.value[1] = (int16_t)(120 + dv[direction]);
                 decoded.value[2] = 0;
                 decoded.value[5] = 4;
-                if (direction < 4U) {
+                if (direction < 4U || direction >= 6U) {
                     if (!require(vision_session_observe(&tolerance, &calibration, &decoded, 0U) ==
                                      VISION_EVENT_ALIGNED && tolerance.iteration == 0U &&
                                      tolerance.confirmations == 1U,
-                                 "one stationary result at +/-14 pixels must align without motion")) return 1;
+                                 "pickup must accept X within +/-14 without moving for Y error")) return 1;
+                    if (!require(tolerance.rightMm == 0.0f,
+                                 "pickup Y error still requested chassis lateral motion")) return 1;
                 } else {
                     uint32_t previousToken = request.token;
                     if (!require(vision_session_observe(&tolerance, &calibration, &decoded, 0U) ==
-                                     VISION_EVENT_MOVE && tolerance.iteration == 1U,
-                                 "either axis outside +/-14 pixels must request correction")) return 1;
+                                     VISION_EVENT_MOVE && tolerance.iteration == 1U && tolerance.rightMm == 0.0f,
+                                 "pickup X outside +/-14 must correct without lateral motion")) return 1;
                     if (!require(vision_session_observe(&tolerance, &calibration, &decoded, 1U) ==
                                      VISION_EVENT_NONE,
                                  "result during movement must be ignored")) return 1;
@@ -605,15 +612,25 @@ int main(void)
                      "sampling accepted a stale camera result")) return 1;
         decoded.token = request.token;
         decoded.flags = VISION_FLAG_VALID;
-        if (!require(vision_session_observe(&sampling, &unknown, &decoded, 4U) == VISION_EVENT_FAILED,
-                     "sampling accepted an unstable result")) return 1;
+        if (!require(vision_session_observe(&sampling, &unknown, &decoded, 4U) == VISION_EVENT_REQUEST &&
+                     sampling.state == VISION_STATE_REQUEST && sampling.misses == 1U,
+                     "unstable sampling did not retry without movement")) return 1;
         vision_session_start_sample(&sampling, &unknown, 19U, 5U);
         vision_session_make_request(&sampling, &unknown, &request, 5U);
         decoded.token = request.token;
         decoded.flags = VISION_FLAG_VALID | VISION_FLAG_STABLE;
         decoded.value[2] = 59;
-        if (!require(vision_session_observe(&sampling, &unknown, &decoded, 6U) == VISION_EVENT_FAILED,
+        if (!require(vision_session_observe(&sampling, &unknown, &decoded, 6U) == VISION_EVENT_REQUEST,
                      "sampling accepted a low-quality ring")) return 1;
+        vision_session_make_request(&sampling, &unknown, &request, 7U);
+        decoded.token = request.token;
+        if (!require(vision_session_observe(&sampling, &unknown, &decoded, 7U) == VISION_EVENT_REQUEST,
+                     "sampling stopped before its retry limit")) return 1;
+        vision_session_make_request(&sampling, &unknown, &request, 8U);
+        decoded.token = request.token;
+        if (!require(vision_session_observe(&sampling, &unknown, &decoded, 8U) == VISION_EVENT_FAILED &&
+                     strcmp(sampling.fault, "SAMPLE_UNCONFIRMED") == 0,
+                     "sampling did not fail after three unconfirmed replies")) return 1;
         unknown.calibrated = 1U;
         unknown.matrix[0] = -0.5f; unknown.matrix[1] = 0;
         unknown.matrix[2] = 0; unknown.matrix[3] = -1.0f;
@@ -624,6 +641,34 @@ int main(void)
                      vision_session_observe(&sampling, &unknown, &decoded, 11U) == VISION_EVENT_MOVE &&
                      sampling.forwardMm == -30.0f && sampling.rightMm == -60.0f,
                      "calibrated alignment did not use the full movement vector")) return 1;
+    }
+    {
+        VisionSession sampling;
+        VisionPacket request, result;
+        VisionCalibration unknown = visionMaterialCalibration;
+        unknown.calibrated = 0U;
+        vision_session_init(&sampling);
+        if (!require(!vision_session_start_material_sample(&sampling, &unknown, 0U, 9U, 0U) &&
+                     !vision_session_start_material_sample(&sampling, &unknown, 7U, 9U, 0U) &&
+                     !vision_session_start_material_sample(&sampling, &unknown, 4U, 0U, 0U),
+                     "material sample accepted an invalid color or ID")) return 1;
+        if (!require(vision_session_start_material_sample(&sampling, &unknown, 4U, 9U, 0U),
+                     "material sampling required an existing scale")) return 1;
+        vision_session_make_request(&sampling, &unknown, &request, 0U);
+        result = request;
+        result.type = VISION_MESSAGE_RESULT;
+        result.flags = VISION_FLAG_VALID | VISION_FLAG_STABLE;
+        result.value[0] = 180; result.value[1] = 140;
+        result.value[2] = 0; result.value[5] = 2;
+        if (!require(vision_session_observe(&sampling, &unknown, &result, 1U) == VISION_EVENT_REQUEST,
+                     "material sample accepted a different color")) return 1;
+        vision_session_make_request(&sampling, &unknown, &request, 2U);
+        result.token = request.token;
+        result.value[5] = 4;
+        if (!require(vision_session_observe(&sampling, &unknown, &result, 3U) == VISION_EVENT_SAMPLED &&
+                     sampling.state == VISION_STATE_IDLE && sampling.forwardMm == 0.0f &&
+                     sampling.rightMm == 0.0f && sampling.sampleId == 9U,
+                     "material sampling moved or rejected diagnostic quality")) return 1;
     }
     return 0;
 }

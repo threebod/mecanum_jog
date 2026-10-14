@@ -30,7 +30,7 @@ AREA_LIMIT = {
     "black":      (1500, 30000),
 }
 
-CAM_W, CAM_H = 320, 240                       # 分辨率常量
+CAM_W, CAM_H = 640,480                    # 分辨率常量
 SCREEN_CX, SCREEN_CY = CAM_W // 2, CAM_H // 2  # 屏幕中心(原点) = (160, 120)
 
 cam = camera.Camera(CAM_W, CAM_H)

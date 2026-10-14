@@ -1,0 +1,166 @@
+{
+    "version": 1,
+    "name": "05_夹取_第二轮平台1",
+    "loopEnabled": false,
+    "loopCount": 2,
+    "initialState": {
+        "gripper": "open",
+        "platform": 2,
+        "gripperOpenDeg": 70,
+        "gripperCloseDeg": 35,
+        "gripperDps10": 1800,
+        "platformDps10": 1800,
+        "platformDeg": [
+            26,
+            146,
+            264
+        ],
+        "horizontalDmm": -500,
+        "liftDmm": 0,
+        "turretDdeg": 2720,
+        "horizontalRpm": 500,
+        "horizontalAccel": 200,
+        "liftRpm": 1000,
+        "liftAccel": 200,
+        "turretDps10": 1800
+    },
+    "steps": [
+        {
+            "waitMs": 0,
+            "type": "platform",
+            "value": 1
+        },
+        {
+            "waitMs": 0,
+            "type": "gripper",
+            "value": 1
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -200,
+                "liftDmm": 0,
+                "turretDdeg": 2680,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -200,
+                "liftDmm": 500,
+                "turretDdeg": 2680,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "gripper",
+            "value": 0
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -200,
+                "liftDmm": 0,
+                "turretDdeg": 2680,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -200,
+                "liftDmm": 0,
+                "turretDdeg": 1320,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -500,
+                "liftDmm": 0,
+                "turretDdeg": 1320,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -500,
+                "liftDmm": 250,
+                "turretDdeg": 1320,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "gripper",
+            "value": 1
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -500,
+                "liftDmm": 0,
+                "turretDdeg": 1320,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "platform",
+            "value": 2
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": 0,
+                "liftDmm": 0,
+                "turretDdeg": 2720,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        }
+    ]
+}

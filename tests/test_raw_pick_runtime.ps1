@@ -35,6 +35,7 @@ static const VisionCalibration visionPickCalibration={
 static unsigned moves,picks;
 static float lastForward,lastRight;
 static MechanismPose pickFinalPose;
+static MechanismAction pickedActions[RAW_PICK_ACTION_COUNT];
 static const char *lastFault;
 static char logText[16384];
 #define __disable_irq() ((void)0)
@@ -70,6 +71,7 @@ static uint8_t startVisionMotion(float f,float r,uint16_t rpm,uint8_t automatic)
 uint8_t mechanismActionStart(const MechanismInitialState *initial,
                              const MechanismAction *actions,uint16_t count) {
     assert(initial==&rawPickInitial && count==RAW_PICK_ACTION_COUNT);
+    memcpy(pickedActions,actions,sizeof(pickedActions));
     assert(actions[0].value==rawPickCurrentSlot);
     assert(rawPickCurrentSlot==rawPickItemIndex+1);
     assert(visionSession.selector==rawPickCurrentColor && visionSession.pickupMode==2);
@@ -83,14 +85,17 @@ uint8_t mechanismActionStart(const MechanismInitialState *initial,
 }
 '@
 $suffix = @'
-static void observe(uint8_t valid,int16_t u,uint8_t color) {
+static void observeAt(uint8_t valid,int16_t u,int16_t v,uint8_t color) {
     visionRxPacket=lastRequest;
     visionRxPacket.type=VISION_MESSAGE_RESULT;
     visionRxPacket.flags=valid ? VISION_FLAG_VALID|VISION_FLAG_STABLE : 0;
-    visionRxPacket.value[0]=u;visionRxPacket.value[1]=120;
+    visionRxPacket.value[0]=u;visionRxPacket.value[1]=v;
     visionRxPacket.value[2]=0; /* Quality is diagnostic only, even for a valid target. */
     visionRxPacket.value[5]=color;
     visionRxReady=1;serviceVision();
+}
+static void observe(uint8_t valid,int16_t u,uint8_t color) {
+    observeAt(valid,u,120,color);
 }
 static void prepare(void) {
     mechanismState.valid=1;mechanismState.running=0;
@@ -252,7 +257,7 @@ int main(void) {
         VisionPacket oldRingResult;
         unsigned beforeMoves=moves,beforePicks=picks;
         assert(missionTaskParse("156+123+516+231",&missionTask));
-        missionActive=1;missionPhase=MISSION_TEMP_ALIGN;routeIndex=14;
+        missionActive=1;missionPhase=MISSION_TEMP_ALIGN;routeIndex=16;
         rawPickAtStation=0;visionPickActive=0;mechanismActionActive=0;
         mechanismState.valid=1;mechanismState.running=0;
         visionRingCalibration[1]=visionMaterialCalibration;
@@ -297,6 +302,11 @@ int main(void) {
         servoChannelMoving[0]=0;
         assert(processVisionCommand("vision sample ring 2 7") && !armed && visionSession.sampleOnly);
         serviceVision();oldSample=lastRequest;
+        visionRxPacket=lastRequest;visionRxPacket.type=VISION_MESSAGE_RESULT;
+        visionRxPacket.flags=VISION_FLAG_VALID;
+        visionRxPacket.value[2]=80;visionRxReady=1;serviceVision();
+        assert(visionSession.state==VISION_STATE_REQUEST && moves==beforeMoves && picks==beforePicks);
+        serviceVision();assert(lastRequest.token>oldSample.token);
         logText[0]=0;
         visionRxPacket=lastRequest;visionRxPacket.type=VISION_MESSAGE_RESULT;
         visionRxPacket.flags=VISION_FLAG_VALID|VISION_FLAG_STABLE;
@@ -323,7 +333,94 @@ int main(void) {
         armed=1;
         assert(processVisionCommand("vision align ring 2") && !visionSession.sampleOnly);
     }
-    puts("PASS: pickup runtime and read-only ring sampling, ID replies, stale rejection, authorized probes and scale application");
+    {
+        unsigned beforeMoves=moves,beforePicks=picks;
+        rawPickAtStation=visionPickActive=mechanismActionActive=0;
+        mechanismState.running=0;motionMode=routeActive=0;
+        vision_session_init(&visionSession);
+        visionMaterialCalibration.calibrated=0;
+        assert(processVisionCommand("vision sample material 0 9") && !visionSession.sampleOnly);
+        assert(processVisionCommand("vision sample material 4 0") && !visionSession.sampleOnly);
+        assert(processVisionCommand("vision sample material 7 9") && !visionSession.sampleOnly);
+        imuValid=0;
+        assert(processVisionCommand("vision sample material 4 9") && !visionSession.sampleOnly);
+        imuValid=1;imuStamp=clockMs;
+        assert(processVisionCommand("vision sample material 4 9") && visionSession.sampleOnly);
+        serviceVision();
+        assert(lastRequest.mode==VISION_MODE_MATERIAL && lastRequest.selector==4 && lastRequest.target==0);
+        visionRxPacket=lastRequest;visionRxPacket.type=VISION_MESSAGE_RESULT;
+        visionRxPacket.flags=VISION_FLAG_VALID|VISION_FLAG_STABLE;
+        visionRxPacket.value[0]=180;visionRxPacket.value[1]=140;
+        visionRxPacket.value[2]=0;visionRxPacket.value[5]=2;
+        visionRxReady=1;serviceVision();
+        assert(visionSession.state==VISION_STATE_REQUEST);
+        serviceVision();
+        visionRxPacket=lastRequest;visionRxPacket.type=VISION_MESSAGE_RESULT;
+        visionRxPacket.flags=VISION_FLAG_VALID|VISION_FLAG_STABLE;
+        visionRxPacket.value[0]=180;visionRxPacket.value[1]=140;
+        visionRxPacket.value[2]=0;visionRxPacket.value[5]=4;
+        logText[0]=0;visionRxReady=1;serviceVision();
+        assert(visionSession.state==VISION_STATE_IDLE && moves==beforeMoves && picks==beforePicks);
+        assert(strstr(logText,"VISION MEASURE id=9 material=4 token=") && strstr(logText," quality=0"));
+        armed=1;
+        assert(processVisionCommand("vision scale material 500 1000") && !armed);
+        assert(visionMaterialCalibration.matrix[0]==-0.5f && visionMaterialCalibration.matrix[3]==-1.0f);
+    }
+    {
+        unsigned index;
+        const int16_t vertical[3]={35,-35,10};
+        const int16_t expected[3]={-436,36,-267};
+        missionActive=0;routeIndex=4;rawPickAtStation=routeWaiting=1;
+        visionMaterialCalibration.matrix[3]=-0.673f;
+        for(index=0;index<3;++index) {
+            unsigned beforeMoves=moves,beforePicks=picks;
+            rawPickItemIndex=1;rawPickCollectedMask=8;
+            visionPickActive=mechanismActionActive=0;lastFault=0;
+            vision_session_init(&visionSession);prepare();finishLowering();
+            serviceVision();observeAt(1,174,(int16_t)(120+vertical[index]),2);
+            assert(moves==beforeMoves && picks==beforePicks+1 && !lastFault);
+            assert(pickedActions[2].pose.horizontalDmm==expected[index]);
+            assert(pickedActions[4].pose.horizontalDmm==expected[index]);
+            assert(pickedActions[5].pose.horizontalDmm==expected[index]);
+            assert(pickedActions[6].pose.horizontalDmm==-500 && pickedActions[7].pose.liftDmm==250);
+            assert(pickedActions[0].value==2 && pickedActions[10].value==3);
+            assert(rawPickActions[2].pose.horizontalDmm==-200); /* No global or previous-item drift. */
+        }
+        {
+            unsigned beforeMoves=moves,beforePicks=picks;
+            rawPickItemIndex=1;rawPickCollectedMask=8;
+            visionPickActive=mechanismActionActive=0;lastFault=0;
+            vision_session_init(&visionSession);prepare();finishLowering();
+            serviceVision();observeAt(1,175,155,2);
+            assert(moves==beforeMoves+1 && lastRight==0 && picks==beforePicks);
+            vision_session_move_complete(&visionSession,clockMs);
+            clockMs+=300;imuStamp=clockMs;serviceVision();
+            observeAt(1,160,85,2); /* Use the fresh Y after chassis correction. */
+            assert(picks==beforePicks+1 && pickedActions[2].pose.horizontalDmm==36);
+        }
+        for(index=0;index<2;++index) {
+            unsigned beforePicks=picks;
+            rawPickItemIndex=1;rawPickCollectedMask=8;
+            visionPickActive=mechanismActionActive=0;lastFault=0;
+            visionMaterialCalibration.matrix[3]=-2.0f;
+            vision_session_init(&visionSession);prepare();finishLowering();
+            serviceVision();observeAt(1,160,index==0 ? 239 : 1,2);
+            assert(picks==beforePicks && lastFault && strcmp(lastFault,"PICK_HORIZONTAL_RANGE")==0);
+        }
+        {
+            unsigned beforeMoves=moves,beforePicks=picks;
+            rawPickItemIndex=rawPickCollectedMask=0;
+            visionPickActive=mechanismActionActive=0;lastFault=0;
+            visionMaterialCalibration.matrix[3]=-0.673f;
+            vision_session_init(&visionSession);prepare();finishLowering();
+            serviceVision();observeAt(1,160,170,2); /* Any-color alignment must not fix Y on the chassis. */
+            assert(moves==beforeMoves && picks==beforePicks && visionSession.selector==4);
+            serviceVision();observeAt(1,160,85,4);
+            assert(picks==beforePicks+1 && pickedActions[2].pose.horizontalDmm==36);
+            assert(pickedActions[0].value==1 && !lastFault); /* Use this item's Y, not the prior color's. */
+        }
+    }
+    puts("PASS: pickup runtime, X-only chassis correction, Y grasp compensation and horizontal limits");
     return 0;
 }
 '@

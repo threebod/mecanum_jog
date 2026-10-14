@@ -1,3 +1,4 @@
+import math
 import pathlib
 import sys
 import types
@@ -183,6 +184,106 @@ class VisionDetectorTest(unittest.TestCase):
         self.assertEqual(1, len(targets))
         self.assertEqual((100, 80), targets[0][:2])
         self.assertEqual((40, 40), targets[0][3:])
+
+    def test_two_same_radius_contours_are_accepted_but_single_contour_is_not(self):
+        self.assertEqual([], _cluster_rings([(100, 80, 40)]))
+        self.assertEqual([(100, 80, 80, 80, 80)],
+                         _cluster_rings([(100, 80, 40), (100, 80, 40)]))
+
+    def test_ring_cluster_distance_is_strict_and_checked_per_axis(self):
+        for dx, dy, accepted in [(3.9, 3.9, True), (-3.9, -3.9, True),
+                                  (4, 0, False), (0, 4, False),
+                                  (-4, 0, False), (0, -4, False)]:
+            with self.subTest(dx=dx, dy=dy):
+                targets = _cluster_rings([(100, 80, 30), (100 + dx, 80 + dy, 40)])
+                self.assertEqual(accepted, len(targets) == 1)
+
+    def test_ring_clusters_keep_three_strongest_and_sort_by_average_x(self):
+        circles = []
+        for x, count in [(200, 4), (100, 5), (50, 2), (150, 3)]:
+            circles.extend((x, 80, 30 + index) for index in range(count))
+        targets = _cluster_rings(circles)
+        self.assertEqual([100, 150, 200], [target[0] for target in targets])
+        self.assertEqual([68, 64, 66], [target[3] for target in targets])
+
+    def test_ring_contour_radius_area_and_circularity_boundaries(self):
+        import cv2
+        import numpy as np
+
+        maix = types.ModuleType("maix")
+        maix.image = Mock()
+        request = {"target": 2, "flags": FLAG_RING_NO_DIGIT,
+                   "values": [0, 0, 320, 240, 160, 120, 0, 0]}
+        for scale in (1, 2):
+            maix.image.image2cv.return_value = np.full(
+                (240 * scale, 320 * scale), 255, dtype=np.uint8)
+            min_area = math.pi * (25 * scale) ** 2 * 0.5
+            for radius, area, circularity, accepted in [
+                    (24.99, min_area, 0.6, False), (25, min_area, 0.6, True),
+                    (80, min_area, 0.6, True), (80.01, min_area, 0.6, False),
+                    (40, min_area - 1, 0.6, False), (40, min_area, 0.6, True),
+                    (40, min_area, 0.5, True), (40, min_area, 0.49, False)]:
+                with self.subTest(scale=scale, radius=radius, area=area,
+                                  circularity=circularity):
+                    # A contour without parent or child is now filtered by geometry only.
+                    hierarchy = np.array([[[-1, -1, -1, -1]]])
+                    with patch.dict(sys.modules, {"maix": maix}), \
+                            patch.object(cv2, "findContours", return_value=([object()], hierarchy)), \
+                            patch.object(cv2, "contourArea", return_value=area), \
+                            patch.object(cv2, "minEnclosingCircle",
+                                         return_value=((1, 1), radius * scale)), \
+                            patch.object(cv2, "arcLength",
+                                         return_value=math.sqrt(4 * math.pi * area / circularity)), \
+                            patch.object(cv2, "moments", return_value={
+                                "m00": area, "m10": 120 * scale * area,
+                                "m01": 90 * scale * area}):
+                        diagnostics = {}
+                        self.assertIsNone(find_ring(Mock(), request, diagnostics))
+                    self.assertEqual(int(accepted), len(diagnostics["circles"]))
+                    if accepted:
+                        self.assertEqual((120, 90, radius), diagnostics["circles"][0])
+
+    def test_ring_preprocessing_scales_and_preserves_original_digit_image(self):
+        import cv2
+        import numpy as np
+
+        maix = types.ModuleType("maix")
+        maix.image = Mock()
+        request = {"target": 2, "values": [50, 30, 140, 130, 120, 90, 0, 0]}
+        for scale, block, sigma in [(1, 11, 1.5), (2, 21, 3.0)]:
+            with self.subTest(scale=scale):
+                gray = np.full((240 * scale, 320 * scale), 255, dtype=np.uint8)
+                cv2.circle(gray, (120 * scale, 90 * scale), 40 * scale, 0, 3 * scale)
+                original = gray.copy()
+                maix.image.image2cv.return_value = gray
+                with patch.dict(sys.modules, {"maix": maix}), \
+                        patch.object(cv2, "GaussianBlur", wraps=cv2.GaussianBlur) as blur, \
+                        patch.object(cv2, "addWeighted", wraps=cv2.addWeighted) as sharpen, \
+                        patch.object(cv2, "adaptiveThreshold", wraps=cv2.adaptiveThreshold) as binary, \
+                        patch("ring_digits.read_ring_digit", return_value=(2, 1.0)) as digit:
+                    self.assertIsNotNone(find_ring(Mock(), request))
+                self.assertEqual([((3, 3), 0), ((0, 0), sigma)],
+                                 [call.args[1:] for call in blur.call_args_list])
+                self.assertEqual((2.0, -1.0, 0),
+                                 (sharpen.call_args.args[1], *sharpen.call_args.args[3:]))
+                self.assertEqual((block, 10), binary.call_args.args[-2:])
+                self.assertIs(gray, digit.call_args.args[0])
+                np.testing.assert_array_equal(original, gray)
+
+    def test_small_ring_roi_and_empty_contours_return_no_target(self):
+        import numpy as np
+
+        maix = types.ModuleType("maix")
+        maix.image = Mock()
+        maix.image.image2cv.return_value = np.full((480, 640), 255, dtype=np.uint8)
+        for width, height in [(10, 240), (320, 10), (320, 240)]:
+            with self.subTest(width=width, height=height), \
+                    patch.dict(sys.modules, {"maix": maix}):
+                diagnostics = {"circles": ["old"]}
+                request = {"target": 2, "flags": FLAG_RING_NO_DIGIT,
+                           "values": [0, 0, width, height, 160, 120, 0, 0]}
+                self.assertIsNone(find_ring(Mock(), request, diagnostics))
+                self.assertEqual({"circles": [], "targets": [], "digits": []}, diagnostics)
 
     def test_ring_resolution_preserves_center_and_diameter_with_offset_roi(self):
         import cv2

@@ -1,0 +1,444 @@
+{
+    "initialState": {
+        "gripper": "open",
+        "gripperCloseDeg": 35,
+        "gripperDps10": 1800,
+        "gripperOpenDeg": 70,
+        "horizontalAccel": 200,
+        "horizontalDmm": 50,
+        "horizontalRpm": 500,
+        "liftAccel": 200,
+        "liftDmm": 1300,
+        "liftRpm": 1000,
+        "platform": 3,
+        "platformDeg": [
+            26,
+            146,
+            264
+        ],
+        "platformDps10": 1800,
+        "turretDdeg": 3080,
+        "turretDps10": 1800
+    },
+    "loopCount": 2,
+    "loopEnabled": false,
+    "name": "10_粗加工回收_1到2到3",
+    "steps": [
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": 50,
+                "liftDmm": 0,
+                "turretDdeg": 3080,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -500,
+                "liftDmm": 0,
+                "turretDdeg": 3080,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "platform",
+            "value": 1
+        },
+        {
+            "waitMs": 0,
+            "type": "gripper",
+            "value": 1
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -240,
+                "liftDmm": 0,
+                "turretDdeg": 2670,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -240,
+                "liftDmm": 1300,
+                "turretDdeg": 2670,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "gripper",
+            "value": 0
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -240,
+                "liftDmm": 0,
+                "turretDdeg": 2670,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -500,
+                "liftDmm": 0,
+                "turretDdeg": 2670,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -500,
+                "liftDmm": 0,
+                "turretDdeg": 1320,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -500,
+                "liftDmm": 300,
+                "turretDdeg": 1320,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "gripper",
+            "value": 1
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -500,
+                "liftDmm": 0,
+                "turretDdeg": 1320,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "platform",
+            "value": 2
+        },
+        {
+            "waitMs": 0,
+            "type": "gripper",
+            "value": 1
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": 500,
+                "liftDmm": 0,
+                "turretDdeg": 2320,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": 500,
+                "liftDmm": 1300,
+                "turretDdeg": 2320,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "gripper",
+            "value": 0
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": 500,
+                "liftDmm": 0,
+                "turretDdeg": 2320,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -500,
+                "liftDmm": 0,
+                "turretDdeg": 2320,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -500,
+                "liftDmm": 0,
+                "turretDdeg": 1320,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -500,
+                "liftDmm": 300,
+                "turretDdeg": 1320,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "gripper",
+            "value": 1
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -500,
+                "liftDmm": 0,
+                "turretDdeg": 1320,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "platform",
+            "value": 3
+        },
+        {
+            "waitMs": 0,
+            "type": "gripper",
+            "value": 1
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": 50,
+                "liftDmm": 0,
+                "turretDdeg": 3080,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": 50,
+                "liftDmm": 1300,
+                "turretDdeg": 3080,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "gripper",
+            "value": 0
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": 50,
+                "liftDmm": 0,
+                "turretDdeg": 3080,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -500,
+                "liftDmm": 0,
+                "turretDdeg": 3080,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -500,
+                "liftDmm": 0,
+                "turretDdeg": 1320,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -500,
+                "liftDmm": 300,
+                "turretDdeg": 1320,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "gripper",
+            "value": 1
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": -500,
+                "liftDmm": 0,
+                "turretDdeg": 1320,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": 0,
+                "liftDmm": 0,
+                "turretDdeg": 1320,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "pose",
+            "pose": {
+                "horizontalDmm": 0,
+                "liftDmm": 0,
+                "turretDdeg": 2720,
+                "horizontalRpm": 500,
+                "horizontalAccel": 200,
+                "liftRpm": 1000,
+                "liftAccel": 200,
+                "turretDps10": 1800
+            }
+        },
+        {
+            "waitMs": 0,
+            "type": "gripper",
+            "value": 1
+        }
+    ],
+    "version": 1
+}

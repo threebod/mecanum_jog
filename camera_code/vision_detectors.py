@@ -48,23 +48,21 @@ def _cluster_rings(circles):
         for group in groups:
             center_x = sum(item[0] for item in group) / len(group)
             center_y = sum(item[1] for item in group) / len(group)
-            if math.hypot(circle[0] - center_x, circle[1] - center_y) < \
-                    settings.RING_CENTER_TOLERANCE:
+            if abs(circle[0] - center_x) < settings.RING_CENTER_TOLERANCE and \
+                    abs(circle[1] - center_y) < settings.RING_CENTER_TOLERANCE:
                 group.append(circle)
                 break
         else:
             groups.append([circle])
+    groups = [group for group in groups if len(group) >= settings.RING_MIN_CONTOURS]
+    groups.sort(key=len, reverse=True)
+    groups = groups[:settings.RING_TARGET_COUNT]
+    groups.sort(key=lambda group: sum(item[0] for item in group) / len(group))
     targets = []
     for group in groups:
-        radii = []
-        for radius in sorted(item[2] for item in group):
-            if not radii or radius - radii[-1] > 3:
-                radii.append(radius)
-        if len(radii) < settings.RING_MIN_DISTINCT_RADII:
-            continue
         center_x = int(round(sum(item[0] for item in group) / len(group)))
         center_y = int(round(sum(item[1] for item in group) / len(group)))
-        diameter = int(max(radii) * 2)
+        diameter = int(max(item[2] for item in group) * 2)
         targets.append((center_x, center_y, 80, diameter, diameter))
     return targets
 
@@ -85,26 +83,31 @@ def find_ring(img, request, diagnostics=None):
     roi_x, roi_y = int(x * scale), int(y * scale)
     roi = gray[roi_y:roi_y + int(height * scale),
                roi_x:roi_x + int(width * scale)]
-    if min(roi.shape[:2]) < 23:
+    binary_block = int(settings.RING_BINARY_BLOCK * scale / 2) | 1
+    if min(roi.shape[:2]) < binary_block:
         return None
-    binary = cv2.adaptiveThreshold(cv2.GaussianBlur(roi, (3, 3), 0), 255,
+    filtered = cv2.GaussianBlur(roi, (3, 3), 0)
+    if settings.RING_SHARPEN_AMOUNT > 0:
+        blur = cv2.GaussianBlur(filtered, (0, 0), settings.RING_SHARPEN_SIGMA * scale / 2)
+        filtered = cv2.addWeighted(filtered, 1 + settings.RING_SHARPEN_AMOUNT,
+                                   blur, -settings.RING_SHARPEN_AMOUNT, 0)
+    binary = cv2.adaptiveThreshold(filtered, 255,
                                    cv2.ADAPTIVE_THRESH_MEAN_C,
-                                   cv2.THRESH_BINARY_INV, int(20 * scale) + 1, 10)
-    contours, hierarchy = cv2.findContours(binary, cv2.RETR_TREE,
-                                            cv2.CHAIN_APPROX_SIMPLE)
-    if hierarchy is None:
-        return None
+                                   cv2.THRESH_BINARY_INV, binary_block,
+                                   settings.RING_BINARY_C)
+    contours, _ = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     circles = []
-    for index, contour in enumerate(contours):
+    for contour in contours:
         area = cv2.contourArea(contour)
-        perimeter = cv2.arcLength(contour, True)
-        if area <= 0 or perimeter <= 0 or 4 * math.pi * area / perimeter ** 2 < 0.5:
-            continue
-        if hierarchy[0][index][2] < 0 and hierarchy[0][index][3] < 0:
+        if area < math.pi * (settings.RING_MIN_RADIUS * scale) ** 2 * 0.5:
             continue
         (center_x, center_y), radius = cv2.minEnclosingCircle(contour)
         radius /= scale
         if not settings.RING_MIN_RADIUS <= radius <= settings.RING_MAX_RADIUS:
+            continue
+        perimeter = cv2.arcLength(contour, True)
+        if perimeter <= 0 or 4 * math.pi * area / perimeter ** 2 < \
+                settings.RING_MIN_CIRCULARITY:
             continue
         moments = cv2.moments(contour)
         if moments["m00"] == 0:

@@ -2,18 +2,20 @@
 #define VISION_CONFIG_H
 
 #include "vision_control.h"
+#include "vision_defaults.h"
 
-/* Material scales are rough ring-alignment references. Apply them only after
- * checking direction and pickup anchor. Offline boot applies these same scales
- * to material and ring 2, as confirmed by the user. */
+/* Material and ring 2 have independent, user-confirmed default scales. */
 static VisionCalibration visionMaterialCalibration = {
     0U, {0, 0, 320, 240}, 160, 120,
-    {-0.640f, 0.0f, 0.0f, -0.673f}
+    {-VISION_MATERIAL_FORWARD_MILLI / 1000.0f, 0.0f, 0.0f,
+     -VISION_MATERIAL_RIGHT_MILLI / 1000.0f}
 };
 
 static VisionCalibration visionRingCalibration[3] = {
     {0U, {0, 0, 320, 240}, 160, 120, {0.0f, 0.0f, 0.0f, 0.0f}},
-    {0U, {0, 0, 320, 240}, 160, 120, {0.0f, 0.0f, 0.0f, 0.0f}},
+    {0U, {0, 0, 320, 240}, 160, 120,
+     {-VISION_RING2_FORWARD_MILLI / 1000.0f, 0.0f, 0.0f,
+      -VISION_RING2_RIGHT_MILLI / 1000.0f}},
     {0U, {0, 0, 320, 240}, 160, 120, {0.0f, 0.0f, 0.0f, 0.0f}}
 };
 
