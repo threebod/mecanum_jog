@@ -3139,10 +3139,15 @@ static void serviceMission(void)
     if (missionPhase == MISSION_RING_ALIGN ||
         missionPhase == MISSION_TEMP_ALIGN) {
         if (!missionActionStarted) {
+            if (missionPhase == MISSION_TEMP_ALIGN && mechanismState.running) return;
             if (!mechanismState.valid || mechanismState.running ||
                 mechanismState.current.liftDmm != 0U ||
                 (mechanismState.current.turretDdeg != 2720U &&
-                 mechanismState.current.turretDdeg != 650U)) {
+                 mechanismState.current.turretDdeg != 650U &&
+                 !(missionPhase == MISSION_TEMP_ALIGN &&
+                   mechanismState.current.turretDdeg == 1320U &&
+                   mechanismState.current.horizontalDmm ==
+                       (routeIndex == 16U ? -470 : -450)))) {
                 missionAbort("ring_prep_pose");
                 return;
             }
@@ -3203,7 +3208,6 @@ static void serviceMission(void)
             } else if (missionPhase == MISSION_COARSE_PICK) {
                 missionBuildTaskPickBack(missionPickBackActions,
                                          missionTask.rings[routeIndex == 14U],
-                                         missionTask.rings[routeIndex == 14U][2],
                                          routeIndex == 14U ? -470 : -450);
                 actions = missionPickBackActions;
                 initial = &missionCoarseInitial;
@@ -3225,6 +3229,26 @@ static void serviceMission(void)
                 missionActionStarted = 0U;
                 missionReport("COARSE_PICK");
             } else {
+                MechanismPose lift = missionCoarseInitial.pose;
+                if (missionPhase == MISSION_COARSE_PICK &&
+                    (mechanismState.current.horizontalDmm !=
+                         (routeIndex == 14U ? -470 : -450) ||
+                     mechanismState.current.liftDmm != 300U ||
+                     mechanismState.current.turretDdeg != 1320U)) {
+                    missionAbort("recovery_release_pose");
+                    return;
+                }
+                if (missionPhase == MISSION_COARSE_PICK) {
+                    lift.horizontalDmm = mechanismState.current.horizontalDmm;
+                    lift.turretDdeg = mechanismState.current.turretDdeg;
+                    startMechanismPose(&lift);
+                    if (!mechanismState.valid || !mechanismState.running) {
+                        missionAbort("recovery_lift_start");
+                        return;
+                    }
+                    missionContinue();
+                    return;
+                }
                 missionPhase = MISSION_RECENTER;
                 missionReport("RECENTER");
             }

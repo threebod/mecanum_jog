@@ -224,6 +224,7 @@ static void printVisionState(void) {}
 static void stopServoMotion(void) {}
 static void startMechanismPose(const MechanismPose *pose) {
     mechanismState.target=*pose;mechanismState.running=1;
+    mechanismState.deadlineMs=clockMs+120;
 }
 uint8_t mechanismActionStart(const MechanismInitialState *initial,
         const MechanismAction *actions,uint16_t count) {
@@ -233,8 +234,8 @@ uint8_t mechanismActionStart(const MechanismInitialState *initial,
         static const uint16_t angle[3]={3065,2657,2320};
         static const int16_t horizontal[3]={55,-240,435};
         for(unsigned item=0;item<3;++item) {
-            unsigned platform=item==0 ? 0 : item==1 ? 10 : 20;
-            unsigned release=item==0 ? 8 : item==1 ? 17 : 29;
+            unsigned platform=item==0 ? 0 : item==1 ? 10 : 18;
+            unsigned release=item==0 ? 8 : item==1 ? 16 : 26;
             assert(actions[platform].value==item+1);
             assert(actions[release].pose.turretDdeg==angle[missionTask.rings[routeIndex==14][item]-1]);
             assert(actions[release].pose.horizontalDmm==horizontal[missionTask.rings[routeIndex==14][item]-1]);
@@ -250,7 +251,8 @@ uint8_t mechanismActionStart(const MechanismInitialState *initial,
                mechanismState.current.turretDdeg==ringT[ring]);
         assert(missionPlaceRuns==missionPickRuns+1); /* All three placed before recovery. */
         assert(actions[0].type==MECHANISM_ACTION_POSE && actions[0].pose.liftDmm==0);
-        assert(actions[0].pose.horizontalDmm==ringH[ring] && actions[0].pose.turretDdeg==ringT[ring]);
+        assert(actions[0].pose.horizontalDmm==(routeIndex==14 ? -470 : -450) &&
+               actions[0].pose.turretDdeg==1320);
         for(unsigned i=0;i<3;++i) {
             unsigned base=1+i*11,retract=base+7;
             ring=missionTask.rings[routeIndex==14][i]-1;
@@ -265,7 +267,7 @@ uint8_t mechanismActionStart(const MechanismInitialState *initial,
             assert(actions[retract+1].pose.horizontalDmm==(routeIndex==14 ? -470 : -450));
             assert(actions[retract+1].pose.liftDmm==300);
             assert(actions[retract+2].type==MECHANISM_ACTION_GRIPPER && actions[retract+2].value==1);
-            assert(actions[retract+3].pose.horizontalDmm==(routeIndex==14 ? -470 : -450));
+            if(i<2) assert(actions[retract+3].pose.horizontalDmm==(routeIndex==14 ? -470 : -450));
         }
         ++missionPickRuns;
     }
@@ -275,8 +277,8 @@ uint8_t mechanismActionStart(const MechanismInitialState *initial,
         static const uint16_t angle[3]={3065,2657,2320};
         static const int16_t horizontal[3]={55,-240,435};
         for(unsigned item=0;item<3;++item) {
-            unsigned release=item==0 ? 8 : item==1 ? 17 : 29;
-            unsigned platform=item==0 ? 0 : item==1 ? 10 : 20;
+            unsigned release=item==0 ? 8 : item==1 ? 16 : 26;
+            unsigned platform=item==0 ? 0 : item==1 ? 10 : 18;
             unsigned batch=routeIndex==16;
             unsigned baseSlot=0;
             while(missionTask.colors[0][baseSlot]!=missionTask.colors[batch][item]) ++baseSlot;
@@ -586,6 +588,20 @@ static void tick(void) {
     }
     if(!navRunning && routeWaiting && (routeIndex==7 || routeIndex==14))
         assert(routeHeading==-1);
+    if(missionActive && missionPhase==MISSION_IDLE && mechanismState.running &&
+       (int32_t)(clockMs-mechanismState.deadlineMs)>=0) {
+        mechanismState.current=mechanismState.target;
+        mechanismState.running=0;
+    }
+    if(missionActive && !routeWaiting &&
+       (routeIndex==7 || routeIndex==8 || routeIndex==14 || routeIndex==15)) {
+        assert(mechanismState.current.horizontalDmm==(routeIndex>=14 ? -470 : -450));
+        assert(mechanismState.current.turretDdeg==1320);
+        if(mechanismState.running) {
+            assert(mechanismState.target.horizontalDmm==mechanismState.current.horizontalDmm);
+            assert(mechanismState.target.liftDmm==0 && mechanismState.target.turretDdeg==1320);
+        } else assert(mechanismState.current.liftDmm==0);
+    }
     if(missionActive && routeWaiting) {
         if((missionPhase==MISSION_RING_ALIGN || missionPhase==MISSION_TEMP_ALIGN) && missionActionStarted==1 &&
            mechanismState.running) {
@@ -611,10 +627,12 @@ static void tick(void) {
             visionSession.state=VISION_STATE_ALIGNED;
         }
         if(mechanismActionActive) {
-            mechanismState.current.horizontalDmm=missionPhase==MISSION_COARSE_PLACE ? missionWorkActions[29].pose.horizontalDmm : 0;
-            mechanismState.current.liftDmm=missionPhase==MISSION_COARSE_PLACE ? 1300 : 0;
-            mechanismState.current.turretDdeg=missionPhase==MISSION_COARSE_PLACE ? missionWorkActions[29].pose.turretDdeg :
-                missionPhase==MISSION_COARSE_PICK ? 650 : 2720;
+            mechanismState.current.horizontalDmm=missionPhase==MISSION_COARSE_PLACE ? missionWorkActions[26].pose.horizontalDmm :
+                missionPhase==MISSION_COARSE_PICK ? (routeIndex==14 ? -470 : -450) : 0;
+            mechanismState.current.liftDmm=missionPhase==MISSION_COARSE_PLACE ? 1300 :
+                missionPhase==MISSION_COARSE_PICK ? 300 : 0;
+            mechanismState.current.turretDdeg=missionPhase==MISSION_COARSE_PLACE ? missionWorkActions[26].pose.turretDdeg :
+                missionPhase==MISSION_COARSE_PICK ? 1320 : 2720;
             mechanismActionActive=0;mechanismActionIndex=mechanismActionCount;
         }
         if(motionMode==4) motionMode=0;
@@ -723,6 +741,54 @@ static void checkStationHeadingAlignment(void) {
     assert(!routeActive && routeYaw==-90);
     stopAllMotors();
     puts("PASS: both temporary stations align before vision, fresh samples and 1deg stability required");
+}
+static void checkRecoveryDeparture(void) {
+    for(unsigned batch=0;batch<2;++batch) {
+        int16_t trayH=batch ? -470 : -450;
+        stopAllMotors();
+        mechanismStateInitialize(&mechanismState,&missionCoarseInitial.pose);
+        mechanismState.current.horizontalDmm=trayH;
+        mechanismState.current.liftDmm=300;
+        mechanismState.current.turretDdeg=1320;
+        missionActive=routeActive=routeWaiting=1;
+        missionPhase=MISSION_COARSE_PICK;missionActionStarted=1;
+        routeIndex=batch ? 14 : 7;
+        routeAuto=fullRouteRunning=1;routeStartZone=1;
+        routeHeading=routeNextHeading=-1;routeBaseYaw=0;
+        routeYaw=imuYaw=-90;imuStamp=clockMs;
+        routeLegProgress=0;routeRpm=40;
+        mechanismActionCount=MISSION_PICK_BACK_COUNT;
+        mechanismActionIndex=mechanismActionCount-1;
+        mechanismActionActive=1;
+        /* The last open command must finish before either chassis or lift starts. */
+        serviceMission();
+        assert(routeWaiting && !mechanismState.running && missionPhase==MISSION_COARSE_PICK);
+        mechanismActionIndex=mechanismActionCount;mechanismActionActive=0;
+        serviceMission();
+        assert(!routeWaiting && missionPhase==MISSION_IDLE && mechanismState.running);
+        assert(mechanismState.current.horizontalDmm==trayH && mechanismState.current.liftDmm==300);
+        assert(mechanismState.target.horizontalDmm==trayH && mechanismState.target.liftDmm==0 &&
+               mechanismState.target.turretDdeg==1320);
+        for(unsigned tick=0;tick<4;++tick) {
+            clockMs+=20;imuStamp=clockMs;serviceRoute();
+            assert(routeActive && !routeWaiting && mechanismState.running);
+        }
+        assert(routeForward!=0 || routeRight!=0);
+        /* Arrival waits for a slow background lift, then unfolds from the retained pose. */
+        routeIndex=batch ? 16 : 9;routeWaiting=1;
+        missionPhase=MISSION_TEMP_ALIGN;missionActionStarted=0;
+        serviceMission();
+        assert(missionActive && !missionActionStarted && mechanismState.target.liftDmm==0);
+        mechanismState.current=mechanismState.target;mechanismState.running=0;
+        serviceMission();
+        assert(missionActive && missionActionStarted==1 && mechanismState.running);
+        assert(mechanismState.target.horizontalDmm==-770 && mechanismState.target.liftDmm==0 &&
+               mechanismState.target.turretDdeg==2720);
+        mechanismState.current=mechanismState.target;mechanismState.running=0;
+        stopAllMotors();
+    }
+    imuYaw=0;imuStamp=clockMs;
+    puts("PASS: both recoveries depart after final release while lifting only, hold tray/132deg, unfold at storage");
 }
 int main(void) {
     assert(processTaskCommand("task 156+123+516+231") && missionTaskValid);
@@ -889,8 +955,8 @@ int main(void) {
     }
     missionBuildStoragePlace(missionWorkActions,2);
     assert(missionWorkActions[8].pose.liftDmm==650 &&
-           missionWorkActions[17].pose.liftDmm==650 &&
-           missionWorkActions[29].pose.liftDmm==650);
+           missionWorkActions[16].pose.liftDmm==650 &&
+           missionWorkActions[26].pose.liftDmm==650);
     stopAllMotors();imuStamp=clockMs;armed=1;
     assert(processRouteCommand("route mission 1 40") && missionActive);
     routeWaiting=1;routeIndex=11;missionBeginStation(11);
@@ -1185,6 +1251,7 @@ int main(void) {
     checkStationHeadingAlignment();
     checkMissionButton();
     checkOfflineMission();
+    checkRecoveryDeparture();
     puts("PASS: routes, relative moves, optimized motion and navigation runtime checks");
     return 0;
 }

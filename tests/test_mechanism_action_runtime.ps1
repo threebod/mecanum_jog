@@ -81,9 +81,11 @@ static void checkMissionCounts(void)
         missionBuildTaskPlace(place, rings[batch], 1, 1);
         runMissionActions(MISSION_COARSE_PLACE, &missionCoarseInitial, place, MISSION_COARSE_PLACE_COUNT);
         assert(missionGrabCount == batch * 6 + 3 && missionPlaceCount == batch * 6 + 3);
-        missionBuildTaskPickBack(recover, rings[batch], rings[batch][2], batch ? -470 : -450);
+        missionBuildTaskPickBack(recover, rings[batch], batch ? -470 : -450);
         runMissionActions(MISSION_COARSE_PICK, &missionCoarseInitial, recover, MISSION_PICK_BACK_COUNT);
         assert(missionGrabCount == (batch + 1) * 6 && missionPlaceCount == batch * 6 + 3);
+        assert(mechanismState.current.horizontalDmm == (batch ? -470 : -450));
+        assert(mechanismState.current.liftDmm == 300 && mechanismState.current.turretDdeg == 1320);
         missionBuildTaskPlace(place, rings[batch], batch + 1, 0);
         runMissionActions(MISSION_TEMP_PLACE, &missionInitial, place, MISSION_PLACE_COUNT);
         assert(missionGrabCount == (batch + 1) * 6 && missionPlaceCount == (batch + 1) * 6);
